@@ -267,7 +267,10 @@ abstract class BaseProcessor(val kinds: Set[ResolveTargets.Value]) extends PsiSc
         }
 
         //todo: comps already substituted
-        if (!TypeDefinitionMembers.processDeclarations(comp, this, newState, null, place)) return false
+        for (c <- components) {
+          if (!processType(c, place, state, updateWithProjectionSubst)) return false
+        }
+        //if (!TypeDefinitionMembers.processDeclarations(comp, this, newState, null, place)) return false
         true
       case ex: ScExistentialType => processType(ex.skolem, place, state.put(ScSubstitutor.key, ScSubstitutor.empty))
       case ScSkolemizedType(_, _, lower, upper) => processType(upper, place, state, updateWithProjectionSubst)
