@@ -295,6 +295,11 @@ XML_BEGIN = "<" ("_" | [:jletter:]) | "<!--" | "<?" ("_" | [:jletter:]) | "<![CD
     return process(tINTERPOLATED_STRING);
   }
 
+  "$" / \" {
+    yypushback(yytext().length() - 2);
+    return process(tINTERPOLATED_STRING_ESCAPE);
+  }
+
   "$"{identifier} {
     if (yycharat(1) != '$') {
       haveIdInString = true;
@@ -334,6 +339,11 @@ XML_BEGIN = "<" ("_" | [:jletter:]) | "<!--" | "<?" ("_" | [:jletter:]) | "<![CD
 
   {INTERPOLATED_MULTI_LINE_STRING_PART} {
     return process(tINTERPOLATED_MULTILINE_STRING);
+  }
+
+  "$" / \" {
+    yypushback(yytext().length() - 2);
+    return process(tINTERPOLATED_STRING_ESCAPE);
   }
 
   "$"{identifier} {

@@ -21,6 +21,8 @@ object A {
   """
 
   val g = f"""blah blah $ blah"""
+
+  val i = s"$""
 }
 -----
 object {object}
@@ -194,6 +196,19 @@ interpolatedmultiline string {"""blah blah }
 wrong string content {$}
 interpolatedmultiline string { blah}
 interpolated string end {"""}
+white space in line {
+
+  }
+val {val}
+white space in line { }
+identifier {i}
+white space in line { }
+= {=}
+white space in line { }
+interpolated string id {s}
+interpolated string {"}
+interpolated string escape {$"}
+interpolated string end {"}
 white space in line {
 }
 } {}}
