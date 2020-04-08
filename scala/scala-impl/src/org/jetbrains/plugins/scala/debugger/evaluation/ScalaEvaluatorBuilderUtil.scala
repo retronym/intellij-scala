@@ -3,7 +3,7 @@ package debugger
 package evaluation
 
 import com.intellij.debugger.SourcePosition
-import com.intellij.debugger.engine.evaluation.CodeFragmentFactoryContextWrapper
+import com.intellij.debugger.engine.evaluation.{CodeFragmentFactoryContextWrapper, EvaluationContextImpl}
 import com.intellij.debugger.engine.evaluation.expression._
 import com.intellij.debugger.engine.{JVMName, JVMNameUtil}
 import com.intellij.lang.java.JavaLanguage
@@ -44,6 +44,7 @@ import org.jetbrains.plugins.scala.lang.resolve.ScalaResolveResult
 import org.jetbrains.plugins.scala.macroAnnotations.CachedInUserData
 
 import scala.annotation.tailrec
+import scala.collection.JavaConverters.asScalaBufferConverter
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.NameTransformer
 
@@ -173,6 +174,9 @@ private[evaluation] trait ScalaEvaluatorBuilderUtil {
       val transformed = NameTransformer.encode(fun.name)
       fun match {
         case InsideAsync(call) if !fun.parentOfType(classOf[ScFunctionDefinition]).exists(call.isAncestorOf(_)) =>
+          // TODO support different name mangling in scala-async 0.9.x ("$macro$N"), 0.10.x ("<no suffix>" | "$async$N")
+          //      and the upcoming compiler integrated version ("<no suffix>" | "$N", (just like local defs))
+          // TODO support non-macro uses of async by deferring this check until inside the evaluate method
           transformed + "$macro"
         case _ => transformed
       }
@@ -725,22 +729,37 @@ private[evaluation] trait ScalaEvaluatorBuilderUtil {
       case _: ScGenerator | _: ScForBinding if position != null && isNotUsedEnumerator(named, position.getElementAt) =>
         throw EvaluationException(ScalaBundle.message("not.used.from.for.statement", name))
       case LazyVal(_) => localLazyValEvaluator(named)
-      case InsideAsync(_) =>
-        val simpleLocal = new ScalaLocalVariableEvaluator(name, fileName)
-        val fieldMacro = ScalaFieldEvaluator(new ScalaThisEvaluator(), name + "$macro")
-        ScalaDuplexEvaluator(simpleLocal, fieldMacro)
       case _ => new ScalaLocalVariableEvaluator(name, fileName)
+    }
+    val maybeAsyncEvaluator = new Evaluator() {
+      override def evaluate(context: EvaluationContextImpl): AnyRef = {
+        if (isInAsync(named, context)) {
+          val simpleLocal = localVariableEvaluator
+          val fieldMacro = ScalaFieldEvaluator(new ScalaThisEvaluator(), name)
+          ScalaDuplexEvaluator(simpleLocal, fieldMacro).evaluate(context)
+        } else {
+          localVariableEvaluator.evaluate(context)
+        }
+      }
     }
 
     containingClass match {
-      case `contextClass` | _: ScGenerator | _: ScForBinding => localVariableEvaluator
-      case _ if contextClass == null => localVariableEvaluator
+      case `contextClass` | _: ScGenerator | _: ScForBinding => maybeAsyncEvaluator
+      case _ if contextClass == null => maybeAsyncEvaluator
       case _ =>
         val fieldEval = withOuterFieldEvaluator(containingClass, name, ScalaBundle.message("cannot.evaluate.local.variable", name))
-        ScalaDuplexEvaluator(fieldEval, localVariableEvaluator)
+        ScalaDuplexEvaluator(fieldEval, maybeAsyncEvaluator)
     }
   }
 
+  private def isInAsync(named: PsiNamedElement, context: EvaluationContextImpl) = {
+    val classes = context.getDebugProcess.getPositionManager.getAllClasses(SourcePosition.createFromElement(named)).asScala
+    // This finger print of async works across a wide variety of versions.
+    // See: https://github.com/retronym/boxer/blob/topic/xasync/README.md for test cases
+    // including a compiler-driven use case.
+    val stateMachineClases = classes.filter(_.methodsByName("state$async").size > 0)
+    stateMachineClases.nonEmpty
+  }
 
   def evaluatorForReferenceWithoutParameters(qualifier: Option[ScExpression],
                                              resolve: PsiElement,

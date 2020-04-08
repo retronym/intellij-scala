@@ -52,7 +52,6 @@ import scala.util.Try
 class ScalaPositionManager(val debugProcess: DebugProcess) extends PositionManager with MultiRequestPositionManager with LocationLineManager {
 
   protected[debugger] val caches = new ScalaPositionManagerCaches(debugProcess)
-  private val outerAndNestedTypePartsPattern = """([^\$]*)(\$.*)?""".r
   import caches._
 
   private val debugProcessScope: ElementScope = ElementScope(debugProcess.getProject, debugProcess.getSearchScope)
@@ -135,21 +134,22 @@ class ScalaPositionManager(val debugProcess: DebugProcess) extends PositionManag
         case null =>
         case td: ScTypeDefinition if !isLocalClass(td) =>
           addExactClasses(td)
+          if (ScalaDebuggerSettings.getInstance().FORCE_POSITION_LOOKUP_IN_NESTED_TYPES) {
+            // Compiler plugins may compile code to local classes that IntelliJ is unable to statically know
+            // about. When this option is enabled, also use a non-exact name pattern.
+            namePatterns += NamePattern.forElementNonExact(td)
+          }
         case elem =>
-          val namePattern = NamePattern.forElement(elem)
-          namePatterns ++= Option(namePattern)
+          if (ScalaEvaluatorBuilderUtil.isGenerateClass(elem))
+          namePatterns += NamePattern.forElement(elem)
       }
     }
 
     val foundWithPattern =
       if (namePatterns.isEmpty) Nil
       else filterAllClasses(c => hasLocations(c, position) && namePatterns.exists(_.matches(c)), packageName)
-    val distinctExactClasses = exactClasses.distinct
-    val loadedNestedClasses = if (ScalaDebuggerSettings.getInstance().FORCE_POSITION_LOOKUP_IN_NESTED_TYPES)
-      getNestedClasses(distinctExactClasses).filter(hasLocations(_, position))
-    else Nil
 
-    (distinctExactClasses ++ foundWithPattern ++ loadedNestedClasses).distinct.asJava
+    (exactClasses ++ foundWithPattern).distinct.asJava
   }
 
   @NotNull
@@ -646,23 +646,6 @@ class ScalaPositionManager(val debugProcess: DebugProcess) extends PositionManag
       case name => name
     }
   }
-
-  /**
-   * Retrieve potentially nested classes currently loaded to VM just by iterating all classes and taking into account
-   * the name mangling - instead of using VirtualMachineProxy's nestedTypes method (with caches etc.).
-   */
-  private def getNestedClasses(outerClasses: Seq[ReferenceType]) = {
-    import JavaConverters._
-    for {
-      outer <- outerClasses
-      nested <- debugProcess.getVirtualMachineProxy.allClasses().asScala
-      if outer != nested && extractOuterTypeName(nested.name) == outer.name
-    } yield nested
-  }
-
-  private def extractOuterTypeName(typeName: String) = typeName match {
-    case outerAndNestedTypePartsPattern(outerTypeName, _) => outerTypeName
-  }
 }
 
 object ScalaPositionManager {
@@ -914,14 +897,14 @@ object ScalaPositionManager {
     }
   }
 
-  private class NamePattern(elem: PsiElement) {
+  private class NamePattern(elem: PsiElement, useExact: Boolean) {
     private val containingFile = elem.getContainingFile
     private val sourceName = containingFile.getName
     private val isGeneratedForCompilingEvaluator = containingFile.getUserData(ScalaCompilingEvaluator.classNameKey) != null
     private var compiledWithIndyLambdas = isCompiledWithIndyLambdas(containingFile)
     private val exactName: Option[String] = {
       elem match {
-        case td: ScTypeDefinition if !isLocalClass(td) =>
+        case td: ScTypeDefinition if useExact && !isLocalClass(td) =>
           Some(getSpecificNameForDebugger(td))
         case _ => None
       }
@@ -1005,10 +988,15 @@ object ScalaPositionManager {
 
   private object NamePattern {
     def forElement(elem: PsiElement): NamePattern = {
-      if (elem == null || !ScalaEvaluatorBuilderUtil.isGenerateClass(elem)) return null
-
       val cacheProvider = new CachedValueProvider[NamePattern] {
-        override def compute(): Result[NamePattern] = Result.create(new NamePattern(elem), elem)
+        override def compute(): Result[NamePattern] = Result.create(new NamePattern(elem, useExact = true), elem)
+      }
+
+      CachedValuesManager.getCachedValue(elem, cacheProvider)
+    }
+    def forElementNonExact(elem: PsiElement): NamePattern = {
+      val cacheProvider = new CachedValueProvider[NamePattern] {
+        override def compute(): Result[NamePattern] = Result.create(new NamePattern(elem, useExact = false), elem)
       }
 
       CachedValuesManager.getCachedValue(elem, cacheProvider)
