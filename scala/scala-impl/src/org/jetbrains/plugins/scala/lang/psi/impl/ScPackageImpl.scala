@@ -67,15 +67,23 @@ final class ScPackageImpl private(val pack: PsiPackage) extends PsiPackageImpl(
           if (!processTopLevelDeclarations(processor, state, place)) return false
           processor match {
             case base: BaseProcessor =>
-              val filteredKinds = base.kinds - ResolveTargets.PACKAGE
-              val packageFilter = new BaseProcessor(kinds = filteredKinds)(base.projectContext) {
-                override protected def execute(namedElement: PsiNamedElement)(implicit state: ResolveState): Boolean = {
-                  processor.execute(namedElement, state)
-                }
+              findAliasPackage(name) match {
+                case Some(aliasPackage) =>
+                  val origName = base.getHint(NameHint.KEY).nullSafe.map(_.getName(state)).map(x => name + "." + x)
+                  if (origName.flatMap(n => ScPackageImpl.findPackage(n).nullSafe).isNull) {
+                    if (!aliasPackage.processDeclarations(processor, state, lastParent, place)) return false
+                  } else {
+                    val packageFilter = new BaseProcessor(kinds = base.kinds - ResolveTargets.PACKAGE)(base.projectContext) {
+                      override protected def execute(namedElement: PsiNamedElement)(implicit state: ResolveState): Boolean = {
+                        processor.execute(namedElement, state)
+                      }
+                    }
+                    if (!aliasPackage.processDeclarations(packageFilter, state, lastParent, place)) return false
+                  }
+                  if (!aliasPackage.findPackageObject(scope).forall(processPackageObject)) return false
+                case None =>
               }
-              if (!findAliasPackage(name).forall (scPackage => scPackage.processDeclarations(packageFilter, state, lastParent, place))) return false
             case _ =>
-              true
           }
         }
         true

@@ -13,6 +13,11 @@ class PackageAliasTest extends ResolveTestBase{
   def testReferencePackageObjectMemberViaAlias(): Unit =
     doTest()
 
+  def testReferencePackageObjectMemberViaAlias2(): Unit =
+    doTest()
+
   def testReferenceNestedViaAlias(): Unit =
+    doTest()
+  def testReferenceNestedViaAlias2(): Unit =
     doTest()
 }
