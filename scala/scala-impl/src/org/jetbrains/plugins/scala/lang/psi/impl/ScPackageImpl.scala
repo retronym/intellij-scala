@@ -40,6 +40,13 @@ final class ScPackageImpl private(val pack: PsiPackage) extends PsiPackageImpl(
     def processPackageObject(`object`: ScObject): Boolean =
       ScPackageLike.processPackageObject(`object`)(processor, state, lastParent, place)
 
+    def findAliasPackage(name: String): Option[ScPackage] = {
+      val aliasName = name.replace(".newname", ".oldname") // TODO drive via config or annotations, cache mapping
+      if (aliasName != name)
+        Option(ScPackageImpl.findPackage(aliasName))
+      else None
+    }
+
     getQualifiedName match {
       case ScalaLowerCase if isInScalaContext =>
         implicit val scope: GlobalSearchScope = findScope(processor, place)
@@ -51,13 +58,26 @@ final class ScPackageImpl private(val pack: PsiPackage) extends PsiPackageImpl(
         manager.getCachedClasses(scope, ScalaLowerCase)
           .findByType[ScObject]
           .forall(processPackageObject)
-      case _ if !packageProcessDeclarations(pack)(processor, state, lastParent, place) => false
-      case _ if isInScalaContext =>
-        val scope = findScope(processor, place)
-        if (!findPackageObject(scope).forall(processPackageObject)) return false
-        if (!processTopLevelDeclarations(processor, state, place)) return false
-        true
-      case _ =>
+      case name =>
+        if (!packageProcessDeclarations(pack)(processor, state, lastParent, place))
+          return false
+        if (isInScalaContext) {
+          val scope = findScope(processor, place)
+          if (!findPackageObject(scope).forall(processPackageObject)) return false
+          if (!processTopLevelDeclarations(processor, state, place)) return false
+          processor match {
+            case base: BaseProcessor =>
+              val filteredKinds = base.kinds - ResolveTargets.PACKAGE
+              val packageFilter = new BaseProcessor(kinds = filteredKinds)(base.projectContext) {
+                override protected def execute(namedElement: PsiNamedElement)(implicit state: ResolveState): Boolean = {
+                  processor.execute(namedElement, state)
+                }
+              }
+              if (!findAliasPackage(name).forall (scPackage => scPackage.processDeclarations(packageFilter, state, lastParent, place))) return false
+            case _ =>
+              true
+          }
+        }
         true
     }
   }
