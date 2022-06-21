@@ -298,6 +298,8 @@ package object project {
 
     def customDefaultImports: Option[Seq[String]] =
       scalaModuleSettings.flatMap(_.customDefaultImports)
+
+    def packageAliases: Map[String, String] = scalaModuleSettings.map(_.packageAliases).getOrElse(Map.empty)
   }
 
   class ScalaSdkNotConfiguredException(module: Module) extends IllegalArgumentException(s"No Scala SDK configured for module: ${module.getName}")
@@ -524,6 +526,8 @@ package object project {
       })
 
     def defaultImports: Seq[String] = PrecedenceTypes.forElement(element).defaultImports
+
+    def packageAliases: Map[String, String] = module.map(_.packageAliases).getOrElse(Map.empty)
 
     private[ProjectPsiElementExt] def isDefinedInModuleOrProject(predicate: Module => Boolean): Boolean =
       inThisModuleOrProject(predicate).getOrElse(false)

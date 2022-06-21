@@ -3,6 +3,7 @@ package lang
 package psi
 package impl
 
+import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.psi._
@@ -41,10 +42,20 @@ final class ScPackageImpl private(val pack: PsiPackage) extends PsiPackageImpl(
       ScPackageLike.processPackageObject(`object`)(processor, state, lastParent, place)
 
     def findAliasPackage(name: String): Option[ScPackage] = {
-      val aliasName = name.replace(".newname", ".oldname") // TODO drive via config or annotations, cache mapping
-      if (aliasName != name)
-        Option(ScPackageImpl.findPackage(aliasName))
-      else None
+      import org.jetbrains.plugins.scala.project._
+      val packageAliases = place.packageAliases
+
+      val it = packageAliases.keysIterator
+      def finish(name: String) =
+        Option(ScPackageImpl.findPackage(name))
+      while (it.hasNext) {
+        val alias = it.next()
+        if (name == alias) return finish(packageAliases(alias))
+        else if (name.startsWith(alias + ".")) {
+          return finish(name.replace(alias + ".", packageAliases(alias) + "."))
+        }
+      }
+      None
     }
 
     getQualifiedName match {

@@ -19,7 +19,7 @@ package p1 {
   package newname {
     @packagealias("pl.oldname")
     object `package`
-    pac
+    package p3 {
       class Other
     }
   }
