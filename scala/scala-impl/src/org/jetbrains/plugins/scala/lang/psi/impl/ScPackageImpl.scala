@@ -81,17 +81,18 @@ final class ScPackageImpl private(val pack: PsiPackage) extends PsiPackageImpl(
               findAliasPackage(name) match {
                 case Some(aliasPackage) =>
                   val origName = base.getHint(NameHint.KEY).nullSafe.map(_.getName(state)).map(x => name + "." + x)
-                  if (origName.flatMap(n => ScPackageImpl.findPackage(n).nullSafe).isNull) {
-                    if (!aliasPackage.processDeclarations(processor, state, lastParent, place)) return false
-                  } else {
-                    val packageFilter = new BaseProcessor(kinds = base.kinds - ResolveTargets.PACKAGE)(base.projectContext) {
-                      override protected def execute(namedElement: PsiNamedElement)(implicit state: ResolveState): Boolean = {
-                        processor.execute(namedElement, state)
-                      }
+                  val pacakgeExistsWithoutNeedingAlias = !origName.flatMap(n => ScPackageImpl.findPackage(n).nullSafe).isNull
+                  val filteringProcessor = if (pacakgeExistsWithoutNeedingAlias)
+                    // When the package exists in its new name asExclude package results from the package alias
+                    new BaseProcessor(kinds = base.kinds - ResolveTargets.PACKAGE)(base.projectContext) {
+                    override protected def execute(namedElement: PsiNamedElement)(implicit state: ResolveState): Boolean = {
+                      processor.execute(namedElement, state)
                     }
-                    if (!aliasPackage.processDeclarations(packageFilter, state, lastParent, place)) return false
+                  } else {
+                    processor
                   }
-                  if (!aliasPackage.findPackageObject(scope).forall(processPackageObject)) return false
+                  if (!aliasPackage.processDeclarations(filteringProcessor, state, lastParent, place)) return false
+                  if (!aliasPackage.findPackageObject(scope).forall { po => ScPackageLike.processPackageObject(po)(filteringProcessor, state, lastParent, place) }) return false
                 case None =>
               }
             case _ =>
