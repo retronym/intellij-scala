@@ -73,7 +73,7 @@ final class ScPackageImpl private(val pack: PsiPackage) extends PsiPackageImpl(
         if (!packageProcessDeclarations(pack)(processor, state, lastParent, place))
           return false
         if (isInScalaContext) {
-          val scope = findScope(processor, place)
+          implicit val scope: GlobalSearchScope = findScope(processor, place)
           if (!findPackageObject(scope).forall(processPackageObject)) return false
           if (!processTopLevelDeclarations(processor, state, place)) return false
           processor match {
@@ -81,12 +81,14 @@ final class ScPackageImpl private(val pack: PsiPackage) extends PsiPackageImpl(
               findAliasPackage(name) match {
                 case Some(aliasPackage) =>
                   val origName = base.getHint(NameHint.KEY).nullSafe.map(_.getName(state)).map(x => name + "." + x)
-                  val pacakgeExistsWithoutNeedingAlias = !origName.flatMap(n => ScPackageImpl.findPackage(n).nullSafe).isNull
-                  val filteringProcessor = if (pacakgeExistsWithoutNeedingAlias)
+                  val packageInScopeWithoutAlias = origName.exists(n => manager.getCachedPackageInScope(n).isDefined)
+
+                  val filteringProcessor = if (packageInScopeWithoutAlias) {
                     // When the package exists in its new name asExclude package results from the package alias
                     new BaseProcessor(kinds = base.kinds - ResolveTargets.PACKAGE)(base.projectContext) {
-                    override protected def execute(namedElement: PsiNamedElement)(implicit state: ResolveState): Boolean = {
-                      processor.execute(namedElement, state)
+                      override protected def execute(namedElement: PsiNamedElement)(implicit state: ResolveState): Boolean = {
+                        processor.execute(namedElement, state)
+                      }
                     }
                   } else {
                     processor
