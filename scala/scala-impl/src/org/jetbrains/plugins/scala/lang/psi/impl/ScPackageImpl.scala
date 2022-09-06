@@ -3,6 +3,7 @@ package lang
 package psi
 package impl
 
+import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.psi._
@@ -40,6 +41,23 @@ final class ScPackageImpl private(val pack: PsiPackage) extends PsiPackageImpl(
     def processPackageObject(`object`: ScObject): Boolean =
       ScPackageLike.processPackageObject(`object`)(processor, state, lastParent, place)
 
+    def findAliasPackage(name: String): Option[ScPackage] = {
+      import org.jetbrains.plugins.scala.project._
+      val packageAliases = place.packageAliases
+
+      val it = packageAliases.keysIterator
+      def finish(name: String) =
+        Option(ScPackageImpl.findPackage(name))
+      while (it.hasNext) {
+        val alias = it.next()
+        if (name == alias) return finish(packageAliases(alias))
+        else if (name.startsWith(alias + ".")) {
+          return finish(name.replace(alias + ".", packageAliases(alias) + "."))
+        }
+      }
+      None
+    }
+
     getQualifiedName match {
       case ScalaLowerCase if isInScalaContext =>
         implicit val scope: GlobalSearchScope = findScope(processor, place)
@@ -51,13 +69,37 @@ final class ScPackageImpl private(val pack: PsiPackage) extends PsiPackageImpl(
         manager.getCachedClasses(scope, ScalaLowerCase)
           .findByType[ScObject]
           .forall(processPackageObject)
-      case _ if !packageProcessDeclarations(pack)(processor, state, lastParent, place) => false
-      case _ if isInScalaContext =>
-        val scope = findScope(processor, place)
-        if (!findPackageObject(scope).forall(processPackageObject)) return false
-        if (!processTopLevelDeclarations(processor, state, place)) return false
-        true
-      case _ =>
+      case name =>
+        if (!packageProcessDeclarations(pack)(processor, state, lastParent, place))
+          return false
+        if (isInScalaContext) {
+          implicit val scope: GlobalSearchScope = findScope(processor, place)
+          if (!findPackageObject(scope).forall(processPackageObject)) return false
+          if (!processTopLevelDeclarations(processor, state, place)) return false
+          processor match {
+            case base: BaseProcessor =>
+              findAliasPackage(name) match {
+                case Some(aliasPackage) =>
+                  val origName = base.getHint(NameHint.KEY).nullSafe.map(_.getName(state)).map(x => name + "." + x)
+                  val packageInScopeWithoutAlias = origName.exists(n => manager.getCachedPackageInScope(n).isDefined)
+
+                  val filteringProcessor = if (packageInScopeWithoutAlias) {
+                    // When the package exists in its new name asExclude package results from the package alias
+                    new BaseProcessor(kinds = base.kinds - ResolveTargets.PACKAGE)(base.projectContext) {
+                      override protected def execute(namedElement: PsiNamedElement)(implicit state: ResolveState): Boolean = {
+                        processor.execute(namedElement, state)
+                      }
+                    }
+                  } else {
+                    processor
+                  }
+                  if (!aliasPackage.processDeclarations(filteringProcessor, state, lastParent, place)) return false
+                  if (!aliasPackage.findPackageObject(scope).forall { po => ScPackageLike.processPackageObject(po)(filteringProcessor, state, lastParent, place) }) return false
+                case None =>
+              }
+            case _ =>
+          }
+        }
         true
     }
   }

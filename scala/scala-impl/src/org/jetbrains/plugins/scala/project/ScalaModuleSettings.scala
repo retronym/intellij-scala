@@ -128,7 +128,7 @@ private class ScalaModuleSettings(module: Module, val scalaVersionProvider: Scal
       case YnoPredefOrNoImports(imports)                         => imports
     }
 
-  val features: ScalaFeatures =
+  val features: ScalaFeatures = {
     ScalaFeatures(
       scalaMinorVersion.getOrElse(ScalaVersion.default),
       hasSource3Flag = hasSource3Flag,
@@ -137,6 +137,13 @@ private class ScalaModuleSettings(module: Module, val scalaVersionProvider: Scal
       hasDeprecationFlag = hasDeprecationFlag,
       hasSourceFutureFlag = hasSourceFutureFlag,
     )
+  }
+
+  val packageAliases: Map[String, String] = {
+    additionalCompilerOptions.collect {
+      case YAliasPackage(aliases) => aliases
+    }.flatten.toMap
+  }
 }
 
 private object ScalaModuleSettings {
@@ -234,6 +241,14 @@ private object ScalaModuleSettings {
         case Ynoimports => Seq.empty
       }
     }
+  }
+  private object YAliasPackage {
+    private val YaliasPackage = "-Yalias-package:"
+
+    def unapply(setting: String): Option[Seq[(String, String)]] =
+      if (setting.startsWith(YaliasPackage))
+        Option(setting.substring(YaliasPackage.length).split(",").toList.map(_.trim.split("=").toList).collect { case List(a, b) => (a, b) })
+      else None
   }
 
   @Cached(ModificationTracker.NEVER_CHANGED, null)
