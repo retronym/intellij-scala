@@ -169,6 +169,15 @@ package object types {
         .extractFrom(scType).map(_._1)
     }
 
+    def extendsClass(cls: PsiClass): Boolean = {
+      scType match {
+        case ScThisType(`cls`) => true
+        case _ =>
+          new ExtendsClassExtractor(cls)
+            .extractFrom(scType).map(_._1).isDefined
+      }
+    }
+
     //performance critical method!
     //may return None even if extractClass is not empty
     @scala.annotation.tailrec
@@ -335,6 +344,7 @@ package object types {
               val withFollower = if (needSubstitutor) substitutor.followed(parameterizedType.substitutor) else ScSubstitutor.empty
               (element, withFollower)
           }
+
         case stdType: StdType =>
           stdType.syntheticClass.flatMap {
             filter(_, ScSubstitutor.empty)
@@ -359,6 +369,36 @@ package object types {
         case _: PsiTypeParameter => None
         case c: PsiClass => Some(c, subst)
         case _ => None
+      }
+
+    override val expandAliases: Boolean = true
+  }
+
+  private class ExtendsClassExtractor(cls: PsiClass) extends Extractor[PsiClass] {
+
+    override def needSubstitutor: Boolean = false
+
+
+    override def extractFrom(scType: ScType, visitedAliases: Set[ScTypeAlias]): Option[(PsiClass, ScSubstitutor)] = {
+      scType match {
+        case ct : ScCompoundType =>
+          val compoentsExtract = ct.components.flatMap { comp =>
+            extractFrom(comp, visitedAliases)
+          }
+          compoentsExtract.headOption
+        case _ =>
+          super.extractFrom(scType, visitedAliases)
+      }
+    }
+
+    override def filter(named: PsiNamedElement, subst: ScSubstitutor): Option[(PsiClass, ScSubstitutor)] =
+      named match {
+        case _: PsiTypeParameter =>
+          None
+        case c: PsiClass if c == cls || c.isInheritor(cls, true) =>
+          Some((c, ScSubstitutor.empty))
+        case _ =>
+          None
       }
 
     override val expandAliases: Boolean = true

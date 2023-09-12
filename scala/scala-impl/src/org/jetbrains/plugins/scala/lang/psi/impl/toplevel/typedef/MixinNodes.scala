@@ -134,7 +134,7 @@ object MixinNodes {
           case _                              => MixinNodes.linearization(thisClass).drop(1)
         }
         val thisTypeSubst = thisClass match {
-          case td: ScTemplateDefinition => ScSubstitutor(ScThisType(td))
+          case td: ScTemplateDefinition => ScSubstitutor(ScThisType(td), thisClass)
           case _                        => ScSubstitutor.empty
         }
         SuperTypesData(superTypes, thisTypeSubst)
@@ -587,7 +587,7 @@ object MixinNodes {
 
           while (newIterator.hasNext) {
             val tp = newIterator.next()
-            add(subst(tp))
+            add(subst.fromClass(clazz.containingClass)(tp))
           }
         case _ =>
           dealias(tp) match {

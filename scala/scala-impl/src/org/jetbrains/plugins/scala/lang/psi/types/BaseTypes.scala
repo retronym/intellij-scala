@@ -71,7 +71,7 @@ private class BaseTypesIterator(tp: ScType) extends Iterator[ScType] {
       case _ => c.getSuperTypes.toSeq.map(_.toScType())
     }
     superTypes.foreach { st =>
-      val substed = substitutor(st)
+      val substed = substitutor.fromClass(c)(st)
       enqueue(substed)
     }
   }
@@ -84,6 +84,11 @@ private class BaseTypesIterator(tp: ScType) extends Iterator[ScType] {
       case JavaArrayType(_) => enqueue(Any)
       case ScCompoundType(comps, _, _) => comps.foreach(enqueue)
       case _ =>
+        val widened = t.widen
+        if (widened ne t) {
+          enqueue(widened)
+          enqueueSupers(widened)
+        }
     }
   }
 

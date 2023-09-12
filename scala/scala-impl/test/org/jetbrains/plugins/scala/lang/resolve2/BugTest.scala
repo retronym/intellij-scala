@@ -60,4 +60,12 @@ class BugTest extends ResolveTestBase {
   def testThisTypeSelfType(): Unit = {doTest()}
   
   def testImplicitsOverloading(): Unit = {doTest()}
+  def testSCL21585B(): Unit = {doTest()}
+  def testSCL21585C(): Unit = {doTest()}
+  def testSCL21585D(): Unit = {doTest()}
+  def testSCL21585E(): Unit = {doTest()}
+  def testSCL21585F(): Unit = {doTest()}
+  def testSCL21585G(): Unit = {doTest()}
+  def testSCL21585H(): Unit = {doTest()}
+  def testSCL21585I(): Unit = {doTest()}
 }

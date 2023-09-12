@@ -120,7 +120,7 @@ class TermSignature(
       return ConstraintsResult.Left
 
     val depParamTypeSubst   = depParamTypeSubstitutor(other)
-    val unified             = other.substitutor.withBindings(typeParams, other.typeParams)
+    val unified             = other.substitutor.withBindings(typeParams, other.typeParams).followed(this.substitutor.fromPlace(this.namedElement))
     val clauseIterator      = substitutedTypes.iterator
     val otherClauseIterator = other.substitutedTypes.iterator
     var lastConstraints     = constraints
@@ -412,6 +412,13 @@ final class PhysicalMethodSignature(
   exportedIn,
   PhysicalMethodSignature.hasRepeatedParam(method)
 ) {
+  if (name == "foo") {
+    getClass
+    val parent = method.getParent
+    val grandParent = parent.getParent
+    ""
+  }
+
   override def isScala: Boolean = method.getLanguage.isKindOf(ScalaLanguage.INSTANCE)
   override def isExtensionMethod: Boolean = extensionTypeParameters.nonEmpty
 }

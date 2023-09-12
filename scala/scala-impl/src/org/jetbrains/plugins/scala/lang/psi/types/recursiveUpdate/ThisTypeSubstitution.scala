@@ -1,6 +1,6 @@
 package org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate
 
-import com.intellij.psi.{PsiClass, PsiElement, PsiTypeParameter}
+import com.intellij.psi.{PsiClass, PsiTypeParameter}
 import org.jetbrains.plugins.scala.extensions.PsiMemberExt
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil.isInheritorDeep
 import org.jetbrains.plugins.scala.lang.psi.api.base.patterns.ScBindingPattern
@@ -10,7 +10,7 @@ import org.jetbrains.plugins.scala.lang.psi.api.toplevel.ScTypedDefinition
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.{ScTemplateDefinition, ScTypeDefinition}
 import org.jetbrains.plugins.scala.lang.psi.types.api.designator.{ScProjectionType, ScThisType}
 import org.jetbrains.plugins.scala.lang.psi.types.api.{ParameterizedType, TypeParameterType}
-import org.jetbrains.plugins.scala.lang.psi.types.{LeafType, ScCompoundType, ScType}
+import org.jetbrains.plugins.scala.lang.psi.types.{BaseTypes, LeafType, ScCompoundType, ScExistentialType, ScParameterizedType, ScType}
 
 import scala.annotation.tailrec
 
@@ -69,11 +69,9 @@ private case class ThisTypeSubstitution(target: ScType) extends LeafSubstitution
   }
 
   @tailrec
-  private def isMoreNarrow(target: ScType, thisTp: ScThisType, visited: Set[PsiElement]): Boolean = {
+  private def isMoreNarrow(target: ScType, thisTp: ScThisType, visited: Set[PsiClass]): Boolean = {
     target.extractDesignated(expandAliases = true) match {
-      case Some(pat: ScBindingPattern) =>
-        if (visited.contains(pat)) false
-        else isMoreNarrow(pat.`type`().getOrAny, thisTp, visited + pat)
+      case Some(pat: ScBindingPattern) => isMoreNarrow(pat.`type`().getOrAny, thisTp, visited)
       case Some(param: ScParameter)    => isMoreNarrow(param.`type`().getOrAny, thisTp, visited)
       case Some(typeParam: PsiTypeParameter) =>
         if (visited.contains(typeParam)) false
@@ -106,4 +104,62 @@ private case class ThisTypeSubstitution(target: ScType) extends LeafSubstitution
         }
     }
   }
+}
+
+private case class ThisTypeSubstitutionNew(target: ScType, fromClass: PsiClass) extends LeafSubstitution {
+
+  override def toString: String = s"`this` -> $target"
+
+  override protected val subst: PartialFunction[LeafType, ScType] = {
+    case th: ScThisType if !hasRecursiveThisType(target, th.element) =>
+      val res = doUpdateThisTypeFromClass(th, target, fromClass)
+      res
+  }
+
+  @tailrec
+  private def doUpdateThisTypeFromClass(thisTp: ScThisType, target: ScType, fromClass: PsiClass): ScType = {
+    if (fromClass == null)
+      thisTp
+    else if (thisTp.element == fromClass && target.extendsClass(fromClass)) {
+      target
+    } else {
+      val baseType = BaseTypes.iterator(target).find(p => p.extractClass.contains(fromClass))
+      baseType match {
+        case Some(baseType) =>
+          fromClass.containingClass match {
+            case null =>
+              thisTp
+            case containing =>
+              def prefix(tp: ScType): ScType = tp match {
+                case param: ScParameterizedType => prefix(param.designator)
+                case proj: ScProjectionType => proj.projected
+                case ex: ScExistentialType => prefix(ex.quantified)
+                  // TODO test this, it is meant to be similar to maybeRewrap in Scalac
+                  // refactor it to a method in ScExistentialType
+                  ScExistentialType(prefix(ex), Some(ex.wildcards))
+                // TODO more cases needed here?
+
+                case tp => null
+              }
+              prefix(baseType) match {
+                case null => thisTp
+                case pre =>
+                  doUpdateThisTypeFromClass(thisTp, pre, containing)
+              }
+          }
+        case None => thisTp
+      }
+    }
+
+  }
+
+  private def hasRecursiveThisType(tp: ScType, clazz: ScTemplateDefinition): Boolean =
+    tp.subtypeExists {
+      case tpe: ScThisType => isSameOrInheritor(clazz, tpe)
+      case _               => false
+    }
+
+
+  private def isSameOrInheritor(clazz: PsiClass, thisTp: ScThisType): Boolean =
+    clazz == thisTp.element || isInheritorDeep(clazz, thisTp.element)
 }

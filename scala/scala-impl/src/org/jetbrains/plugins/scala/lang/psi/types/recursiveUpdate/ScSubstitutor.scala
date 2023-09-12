@@ -1,14 +1,19 @@
 package org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate
 
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.psi.{PsiClass, PsiElement}
 import org.jetbrains.plugins.scala.extensions.ArrayExt
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params.{ScParameter, TypeParamId}
+import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTemplateDefinition
+import org.jetbrains.plugins.scala.lang.psi.impl.toplevel.synthetic.ScSyntheticClass
+import org.jetbrains.plugins.scala.lang.psi.types
 import org.jetbrains.plugins.scala.lang.psi.types.Compatibility.Expression
-import org.jetbrains.plugins.scala.lang.psi.types.api.{Covariant, TypeParameter, TypeParameterType, UndefinedType, Variance}
+import org.jetbrains.plugins.scala.lang.psi.types.api.{Covariant, StdType, StdTypes, TypeParameter, TypeParameterType, UndefinedType, Variance}
 import org.jetbrains.plugins.scala.lang.psi.types.ScType
-import org.jetbrains.plugins.scala.lang.psi.types.api.{Covariant, TypeParameter, TypeParameterType, Variance}
 import org.jetbrains.plugins.scala.lang.psi.types.nonvalue.Parameter
 import org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate.AfterUpdate.{ProcessSubtypes, ReplaceWith, Stop}
+import org.jetbrains.plugins.scala.lang.resolve.ResolveUtils
+import org.jetbrains.plugins.scala.project.ProjectContext
 
 import scala.annotation.tailrec
 import scala.collection.immutable.LongMap
@@ -27,6 +32,18 @@ import scala.util.hashing.MurmurHash3
 final class ScSubstitutor private(_substitutions: Array[Update],   //Array is used for the best concatenation performance, it is effectively immutable
                                   _fromIndex: Int = 0)
   extends (ScType => ScType) {
+  def fromClass(psiClass: PsiClass): ScSubstitutor = {
+    val subs = _substitutions.map {
+      case tts: ThisTypeSubstitution =>
+        ThisTypeSubstitutionNew(tts.target, psiClass)
+      case s => s
+    }
+    new ScSubstitutor(subs, _fromIndex)
+  }
+  def fromPlace(place: PsiElement): ScSubstitutor = {
+    implicit val projectContext = ProjectContext.fromPsi(place)
+    fromClass(ResolveUtils.enclosingTypeDef(place).getOrElse(new ScSyntheticClass("", StdTypes.instance.Any)))
+  }
 
   import ScSubstitutor._
 
@@ -188,6 +205,8 @@ object ScSubstitutor {
 
   def apply(updateThisType: ScType): ScSubstitutor =
     ScSubstitutor(ThisTypeSubstitution(updateThisType))
+ def apply(updateThisType: ScType, fromClass: PsiClass): ScSubstitutor =
+    ScSubstitutor(ThisTypeSubstitutionNew(updateThisType, fromClass))
 
   def paramToExprType(parameters: Seq[Parameter], expressions: Seq[Expression], useExpected: Boolean = true): ScSubstitutor =
     ScSubstitutor(ParamsToExprs(parameters, expressions, useExpected))

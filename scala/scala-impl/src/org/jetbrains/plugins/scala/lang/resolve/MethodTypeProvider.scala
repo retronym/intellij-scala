@@ -1,6 +1,7 @@
 package org.jetbrains.plugins.scala.lang.resolve
 
 import com.intellij.psi._
+import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.plugins.scala.extensions.{ObjectExt, PsiMethodExt, PsiParameterExt, PsiTypeExt}
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaPsiElement
 import org.jetbrains.plugins.scala.lang.psi.api.base._
@@ -41,9 +42,13 @@ sealed trait MethodTypeProvider[+T <: PsiElement] {
       if (typeParams.isEmpty) mTpe
       else                    ScTypePolymorphicType(mTpe, typeParams.map(TypeParameter(_)))
 
-    s(tpe)
-  }
 
+    val psiClass = PsiTreeUtil.getContextOfType(element, classOf[PsiClass])
+    val s1 = if (psiClass != null) {
+      s.fromClass(psiClass)
+    } else s
+    s1(tpe)
+  }
 }
 
 trait ScalaMethodTypeProvider[+T <: ScalaPsiElement] extends MethodTypeProvider[T] {

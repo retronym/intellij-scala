@@ -4,6 +4,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi._
+import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.plugins.scala.ScalaBundle
 import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
@@ -505,10 +506,13 @@ object Compatibility {
   }
 
   def toParameter(p: ScParameter, substitutor: ScSubstitutor): Parameter = {
-    val t = substitutor(p.`type`().getOrNothing)
-    val default = p.getDefaultExpression.flatMap(_.`type`().toOption.map(substitutor))
-    Parameter(p.name, p.deprecatedName, t, t, p.isDefaultParam, p.isRepeatedParameter, p.isCallByNameParameter,
+    val psiClass = PsiTreeUtil.getContextOfType(p, classOf[PsiClass])
+    val substitorFromClass = substitutor.fromClass(psiClass)
+    val t = substitorFromClass(p.`type`().getOrNothing)
+    val default = p.getDefaultExpression.flatMap(_.`type`().toOption.map(substitorFromClass))
+      Parameter(p.name, p.deprecatedName, t, t, p.isDefaultParam, p.isRepeatedParameter, p.isCallByNameParameter,
       p.index, Some(p), default)
+
   }
 
   def compatible(

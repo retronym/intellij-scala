@@ -5,9 +5,10 @@ trait FOGO {
 class OGO {
   self: FOGO =>
 
-  val x: this.type = this
+//  def x(__DEBUG__: Any): this.type = this
 
-  x./* line: 2 */foo
+  val y: this.type = ??? // = x("")
+  y./* line: 2 */foo
 
-  new OGO()./* resolved: false */foo
+
 }

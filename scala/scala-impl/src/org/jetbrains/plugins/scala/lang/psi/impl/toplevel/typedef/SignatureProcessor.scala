@@ -276,10 +276,11 @@ sealed abstract class TermsCollector extends SignatureProcessor[TermSignature] {
   ): TermSignature = {
     val name = methodName(named.name, role)
     val actualRenamed = renamed.map(methodName(_, role))
+    val subst1 = subst.fromPlace(named)
 
     role match {
-      case SETTER | EQ => TermSignature.setter(name, named, subst, actualRenamed, exportedIn)
-      case _           => TermSignature.withoutParams(name, subst, named, actualRenamed, exportedIn)
+      case SETTER | EQ => TermSignature.setter(name, named, subst1, actualRenamed, exportedIn)
+      case _           => TermSignature.withoutParams(name, subst1, named, actualRenamed, exportedIn)
     }
   }
 

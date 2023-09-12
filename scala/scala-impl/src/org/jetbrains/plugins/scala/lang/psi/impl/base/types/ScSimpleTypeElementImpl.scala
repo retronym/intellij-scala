@@ -29,7 +29,7 @@ import org.jetbrains.plugins.scala.lang.psi.types.api.{FunctionType, Nothing, Ty
 import org.jetbrains.plugins.scala.lang.psi.types.nonvalue.{Parameter, ScMethodType, ScTypePolymorphicType}
 import org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate.ScSubstitutor
 import org.jetbrains.plugins.scala.lang.psi.types.result._
-import org.jetbrains.plugins.scala.lang.resolve.ScalaResolveResult
+import org.jetbrains.plugins.scala.lang.resolve.{ResolveUtils, ScalaResolveResult}
 import org.jetbrains.plugins.scala.settings.ScalaApplicationSettings.{getInstance => ScalaApplicationSettings}
 
 class ScSimpleTypeElementImpl(node: ASTNode) extends ScalaPsiElementImpl(node) with ScSimpleTypeElement {
@@ -276,7 +276,8 @@ class ScSimpleTypeElementImpl(node: ASTNode) extends ScalaPsiElementImpl(node) w
               parametrise(calculateReferenceType(ref).
                 getOrElse(return (Nothing, ScSubstitutor.empty)), clazz)
           }
-          val res = subst(tp)
+
+          val res = subst.fromPlace(ref).apply(tp)
           val typeParameters: Seq[TypeParameter] = elem match {
             case tp: ScTypeParametersOwner if tp.typeParameters.nonEmpty =>
               tp.typeParameters.map(TypeParameter(_))
