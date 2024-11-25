@@ -190,7 +190,7 @@ abstract class BaseProcessor(val kinds: Set[ResolveTargets.Value])
               val newState = state
                 .withCompoundOrSelfType(t)
                 .withSubstitutor(ScSubstitutor(ScThisType(clazz)))
-              processTypeImpl(selfType, place, newState)
+              processTypeImpl(ScCompoundType(Seq(selfType))(place.getProject), place, newState)
             }
             else if (clazzType.conforms(selfType)) {
               processElement(clazz, ScSubstitutor.empty, place, state)
