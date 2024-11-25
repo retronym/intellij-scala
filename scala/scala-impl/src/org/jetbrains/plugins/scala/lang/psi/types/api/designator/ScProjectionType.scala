@@ -239,12 +239,34 @@ final class ScProjectionType private(val projected: ScType,
         val lElement = actualElement
         val rElement = proj2.actualElement
 
+        // TODO follow alias types
+        def underlying(tp: ScType): ScType = tp match {
+          case ScProjectionType(proj2, elem2) =>
+            elem2 match {
+              case td: ScTypedDefinition if td.isStable =>
+                val seenFromClass = elem2.containingClassOfNameContext.getOrElse(return tp)
+                val subst = ScSubstitutor(proj2, seenFromClass)
+                val tdType = td.`type`().getOrAny
+                val tp2 = subst.apply(tdType)
+                tp2 match {
+                  case desOwner : DesignatorOwner if (desOwner.isSingleton) =>
+                    underlying(desOwner)
+                  case _ => tp
+                }
+              case _=> tp
+            }
+          case tp => tp
+        }
+
+        val projectedUnderlying = underlying(projected)
+        val p1Underlying = underlying(p1)
+
         val sameElements = lElement == rElement || {
           lElement.name == rElement.name &&
             (isEligibleForPrefixUnification(projected) || isEligibleForPrefixUnification(p1))
         }
 
-        if (sameElements) projected.equiv(p1, constraints, falseUndef)
+        if (sameElements) projectedUnderlying.equiv(p1Underlying, constraints, falseUndef)
         else
           r match {
             case AliasType(_: ScTypeAliasDefinition, Right(lower), _) =>
