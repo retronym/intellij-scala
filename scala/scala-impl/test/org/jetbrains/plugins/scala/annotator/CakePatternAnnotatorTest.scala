@@ -52,14 +52,14 @@ class CakePatternAnnotatorTest extends AnnotatorSimpleTestCase {
       case Nil =>
     }
 
-  // TODO The source code in the test has error annotations when I view it in the IDE but they don't
-  //      appear in this test. Why?
   // TODO Fix the actual problem that is typeing the qualifier `global.gen.C` in the pattern match
   //      with an unstable type.
   def ignoreCakeyPatterns(): Unit =
     assertMatches(messages(
       s"""
-         |
+         |object scala {
+         |  class Option[+A]
+         |}
          |abstract class ApiUniverse extends ApiTrees {
          |  def useTree(t: Tree) = ()
          |}
@@ -73,14 +73,14 @@ class CakePatternAnnotatorTest extends AnnotatorSimpleTestCase {
          |  val global: ApiUniverse
          |  case class C(t: global.Tree)
          |  object D {
-         |    def unapply(a: Any): Option[global.Tree] = null
+         |    def unapply(a: Any): scala.Option[global.Tree] = null
          |  }
          |}
          |
          |abstract class Global extends ApiUniverse {
          |  object gen extends { val global: Global.this.type = Global.this } with ApiTreeGen {}
          |
-         |  new Object match {
+         |  new AnyRef match {
          |    case gen.C(t) => useTree(t) // OK
          |  }
          |}
@@ -91,10 +91,10 @@ class CakePatternAnnotatorTest extends AnnotatorSimpleTestCase {
          |  def test = {
          |    val C2 = global.gen.C
          |
-         |    new Object match {
-         |      case global.gen.C(t) => global.useTree(t) // NOK
-         |      case global.gen.D(t) => global.useTree(t) // NOK
-         |      case C2(t) => global.useTree(t) // OK
+         |    new AnyRef match {
+         |      case global.gen.C(t1) => global.useTree(t1) // NOK
+         |      case global.gen.D(t2) => global.useTree(t2) // NOK
+         |      case C2(t3) => global.useTree(t3) // OK
          |    }
          |
          |    /* SCALAC:
@@ -120,10 +120,7 @@ class CakePatternAnnotatorTest extends AnnotatorSimpleTestCase {
 
     implicit val mock: AnnotatorHolderMock = new AnnotatorHolderMock(parse)
 
-    parse.depthFirst().filterByType[ScExpression].foreach {
-      case t: ScMethodCall =>
-        val text = t.getText
-        annotator.annotate(t, typeAware = true)
+    parse.depthFirst().foreach {
       case t =>
         annotator.annotate(t, typeAware = true)
     }
