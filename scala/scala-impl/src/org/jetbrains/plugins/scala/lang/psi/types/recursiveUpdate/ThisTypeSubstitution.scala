@@ -36,7 +36,8 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
     if (clazz == null || clazz == thisTp.element || clazz.containingClass == null)
       doUpdateThisType(thisTp, target)
     else {
-      BaseTypes.iterator(target).find(_.extractClass.contains(clazz)).flatMap(containingClassType) match {
+      val baseTpes = Iterator(target) ++ BaseTypes.iterator(target)
+      baseTpes.find(_.extractClass.contains(clazz)).flatMap(containingClassType) match {
         case Some(targetContext) => doUpdateThisTypeFromClass(thisTp, targetContext, clazz.containingClass)
         case _                   => thisTp
       }

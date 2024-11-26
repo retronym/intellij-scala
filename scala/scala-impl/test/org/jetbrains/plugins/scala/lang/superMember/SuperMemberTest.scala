@@ -43,9 +43,29 @@ class SuperMemberTest extends ScalaLightCodeInsightFixtureTestCase {
     runTest(name)
   }
 
-  private def runTest(name: String): Unit = {
+  def testSelfTypeScalaCake1(): Unit = {
+    val name = "selfType/ScalacCake1.scala"
+    runTest(name)
+  }
 
+  def testSelfTypeScalaCake2(): Unit = {
+    val name = "selfType/ScalacCake2.scala"
+    runTest(name)
+  }
+
+  def testSelfTypeScalaCake3(): Unit = {
+    val name = "selfType/ScalacCake3.scala"
+    runTest(name)
+  }
+
+  def testSelfTypeScalaCake4(): Unit = {
+    val name = "selfType/ScalacCake4.scala"
+    runTest(name)
+  }
+
+  private def runTest(name: String): Unit = {
     var filePath = sourceRootPath + name
+    LocalFileSystem.getInstance.refresh(false)
     val vFile = LocalFileSystem.getInstance.findFileByPath(filePath.replace(File.separatorChar, '/'))
     assertNotNull("file " + filePath + " not found", vFile)
     var text = StringUtil.convertLineSeparators(VfsUtilCore.loadText(vFile), "\n")
