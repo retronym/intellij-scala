@@ -249,7 +249,7 @@ final class ScProjectionType private(val projected: ScType,
                 val tdType = td.`type`().getOrAny
                 val tp2 = subst.apply(tdType)
                 tp2 match {
-                  case desOwner : DesignatorOwner if (desOwner.isSingleton) =>
+                  case desOwner : DesignatorOwner if (desOwner.isSingleton && desOwner != tp) =>
                     underlying(desOwner)
                   case _ => tp
                 }
