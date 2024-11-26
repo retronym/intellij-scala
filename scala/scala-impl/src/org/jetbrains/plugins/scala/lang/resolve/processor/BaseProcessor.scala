@@ -36,11 +36,11 @@ object BaseProcessor {
     }
 
   //todo ugly recursion breakers, maybe we need general for type? What about performance?
-  private case class RecursionState(visitedProjections: Set[PsiNamedElement],
+  private case class RecursionState(visitedProjections: Set[(PsiNamedElement, ScSubstitutor)],
                                     visitedTypeParameter: Set[TypeParameterType]) {
 
-    def add(projection: PsiNamedElement): RecursionState =
-      copy(visitedProjections = visitedProjections + projection)
+    def add(projection: PsiNamedElement, subst: ScSubstitutor): RecursionState =
+      copy(visitedProjections = visitedProjections + (projection -> subst))
 
     def add(tpt: TypeParameterType): RecursionState =
       copy(visitedTypeParameter = visitedTypeParameter + tpt)
@@ -181,7 +181,7 @@ abstract class BaseProcessor(val kinds: Set[ResolveTargets.Value])
           case Some(ScThisType(`clazz`)) =>
             //to prevent SOE, let's process Element
             processElement(clazz, ScSubstitutor.empty, place, state)
-          case Some(ScProjectionType(_, element)) if recState.visitedProjections.contains(element) =>
+          case Some(ScProjectionType(_, element)) if recState.visitedProjections.contains(element -> ScSubstitutor.empty) =>
             //recursion detected
             true
           case Some(selfType) =>
@@ -258,18 +258,18 @@ abstract class BaseProcessor(val kinds: Set[ResolveTargets.Value])
         val withActual = new ScProjectionType.withActual(updateWithProjectionSubst)
         proj match {
           case withActual(elem, s) =>
-            if (recState.visitedProjections.contains(elem))
+            if (recState.visitedProjections.contains((elem, s)))
               return true
 
             elem match {
               case alias: ScTypeAlias =>
                 val upper = alias.upperBound.getOrElse(return true)
-                processTypeImpl(s(upper), place, state.withSubstitutor(ScSubstitutor.empty))(recState.add(alias))
+                processTypeImpl(s(upper), place, state.withSubstitutor(ScSubstitutor.empty))(recState.add(alias, s))
               case elem =>
                 val subst =
                   if (updateWithProjectionSubst) ScSubstitutor(proj) followed s
                   else                           s
-                processElement(elem, subst, place, state)(recState.add(elem))
+                processElement(elem, subst, place, state)(recState.add(elem, subst))
             }
         }
       case lit: ScLiteralType => processType(lit.wideType, place, state, updateWithProjectionSubst)
@@ -316,9 +316,9 @@ abstract class BaseProcessor(val kinds: Set[ResolveTargets.Value])
 
     e match {
       case ta: ScTypeAlias =>
-        if (recState.visitedProjections.contains(ta)) return true
+        if (recState.visitedProjections.contains(ta -> subst)) return true
         val newState = state.withSubstitutor(ScSubstitutor.empty)
-        processTypeImpl(s(ta.upperBound.getOrAny), place, newState)(recState.add(ta))
+        processTypeImpl(s(ta.upperBound.getOrAny), place, newState)(recState.add(ta, subst))
       //need to process scala way
       case clazz: PsiClass =>
         processClassDeclarations(clazz, BaseProcessor.this, state.withSubstitutor(newSubst), null, place)
