@@ -256,26 +256,17 @@ object BaseTypes {
       .reverseIterator
   }
 
-  private def reduce(typesIt: Iterator[ScType])(implicit context: Context): Seq[ScType] = {
-    val res = mutable.HashMap.empty[PsiClass, ScType]
-    val all = mutable.HashMap.empty[PsiClass, mutable.Set[ScType]]
-    while (typesIt.hasNext) {
-       val t = typesIt.next()
-      t.extractClass match {
-        case Some(c) =>
-          val isBest = all.get(c) match {
-            case None => true
-            case Some(ts) => !ts.exists(t.conforms(_))
-          }
-          if (isBest) {
-            res += c -> t
-          }
-          all.getOrElseUpdate(c, mutable.Set.empty) += t
-        case None => //not a class type
-      }
-    }
-    res.values.toList
-  }
+  // One base type per class. Same-class contributions are *merged*
+  // (mergeSameClass) rather than the previous "keep the most specific arm", so a
+  // class reached via several paths with different arguments yields the variance
+  // merge (e.g. Box[Dog with Cat]) instead of a single arm (Box[Dog] or Box[Cat]).
+  private def reduce(typesIt: Iterator[ScType])(implicit context: Context): Seq[ScType] =
+    typesIt.toList
+      .flatMap(t => t.extractClass.map(_ -> t))
+      .groupBy(_._1)
+      .iterator
+      .map { case (clazz, ps) => mergeSameClass(ps.map(_._2), clazz) }
+      .toList
 
   private object IsTypeAlias {
     def unapply(tp: ScType): Option[(ScTypeAliasDefinition, ScSubstitutor)] = tp match {
