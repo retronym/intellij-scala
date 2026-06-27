@@ -10,7 +10,7 @@ import org.jetbrains.plugins.scala.lang.psi.types.api.designator.{ScDesignatorTy
 import org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate.ScSubstitutor
 
 import java.util
-import scala.annotation.{nowarn, tailrec}
+import scala.annotation.tailrec
 import scala.collection.mutable
 
 object BaseTypes {
@@ -91,26 +91,17 @@ object BaseTypes {
       case None => 0
     }
 
-  private def reduce(types: Seq[ScType])(implicit context: Context): Seq[ScType] = {
-    val res = new mutable.HashMap[PsiClass, ScType]
-    @nowarn("cat=deprecation")
-    object all extends mutable.HashMap[PsiClass, mutable.Set[ScType]] with mutable.MultiMap[PsiClass, ScType]
-    val iterator = types.iterator
-    while (iterator.hasNext) {
-       val t = iterator.next()
-      t.extractClass match {
-        case Some(c) =>
-          val isBest = all.get(c) match {
-            case None => true
-            case Some(ts) => !ts.exists(t.conforms(_))
-          }
-          if (isBest) res += ((c, t))
-          all.addBinding(c, t)
-        case None => //not a class type
-      }
-    }
-    res.values.toList
-  }
+  // One base type per class. Same-class contributions are *merged*
+  // (mergeSameClass) rather than the previous "keep the most specific arm", so a
+  // class reached via several paths with different arguments yields the variance
+  // merge (e.g. Box[Dog with Cat]) instead of a single arm (Box[Dog] or Box[Cat]).
+  private def reduce(types: Seq[ScType])(implicit context: Context): Seq[ScType] =
+    types
+      .flatMap(t => t.extractClass.map(_ -> t))
+      .groupBy(_._1)
+      .iterator
+      .map { case (clazz, ps) => mergeSameClass(ps.map(_._2), clazz) }
+      .toList
 }
 
 private class BaseTypesIterator(tp: ScType)(implicit context: Context) extends Iterator[ScType] {
