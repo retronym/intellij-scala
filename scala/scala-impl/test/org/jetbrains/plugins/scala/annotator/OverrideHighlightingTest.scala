@@ -104,6 +104,42 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     assertNothing(errorsFromScalaCode(code))
   }
 
+  // SCL-21947, third shape (scala/scala Infer.inferTypedPattern). The receiver
+  // `typer` is the global `object typer extends analyzer.Typer`, reached via the
+  // abstract `val global: Global`. Calling `typer.applyTypeToWildcards(pattp)`,
+  // IntelliJ computes the param type as seen through that singleton receiver as
+  // `global.analyzer.global.analyzer.global.Type` (never collapsing the
+  // `analyzer.global: Global.this.type` singleton path back to `global`, and
+  // re-applying the rewrite twice), then reports a false type mismatch against the
+  // argument `global.Type`. scalac accepts it.
+  def testSCL21947Inferencer(): Unit = {
+    val code =
+      """
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |  abstract class Typer {
+        |    def applyTypeToWildcards(tp: Type): Type = tp
+        |  }
+        |}
+        |trait Infer { self: Analyzer =>
+        |  import global._
+        |  class Inferencer {
+        |    def inferTypedPattern(pattp: Type): Type =
+        |      typer.applyTypeToWildcards(pattp)
+        |  }
+        |}
+        |trait Analyzer extends Typers with Infer {
+        |  val global: Global
+        |}
+        |class Global {
+        |  type Type
+        |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+        |  object typer extends analyzer.Typer
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
   def testScl13051_2(): Unit = {
     val code =
       s"""

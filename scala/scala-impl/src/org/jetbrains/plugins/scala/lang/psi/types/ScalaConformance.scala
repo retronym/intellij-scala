@@ -9,7 +9,7 @@ import org.jetbrains.plugins.scala.lang.psi.api.base.ScFieldId
 import org.jetbrains.plugins.scala.lang.psi.api.base.patterns.ScBindingPattern
 import org.jetbrains.plugins.scala.lang.psi.api.statements._
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params._
-import org.jetbrains.plugins.scala.lang.psi.api.toplevel.ScTypeParametersOwner
+import org.jetbrains.plugins.scala.lang.psi.api.toplevel.{ScTypeParametersOwner, ScTypedDefinition}
 import org.jetbrains.plugins.scala.lang.psi.impl.base.literals.ScIntegerLiteralImpl
 import org.jetbrains.plugins.scala.lang.psi.impl.toplevel.synthetic.ScSyntheticClass
 import org.jetbrains.plugins.scala.lang.psi.types.ScalaConformance._
@@ -188,6 +188,78 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
     private val Key(l, r, checkWeak) = key
 
     private implicit val projectContext: ProjectContext = l.projectContext
+
+    private def isSingletonType(t: ScType): Boolean = t match {
+      case _: ScThisType      => true
+      case d: DesignatorOwner => d.isSingleton
+      case _                  => false
+    }
+
+    /**
+     * Singleton type of the stable val-path projection `proj`. Prefer its own
+     * `designatorSingletonType`; if that is not a singleton (the member resolved to
+     * an abstract declaration, e.g. `Analyzer#global: Global`), consult the prefix's
+     * refinement: when the prefix value-type is a compound `… { val m: S }`, use the
+     * refined `S` (substituted through the projection). This recovers the narrower
+     * singleton type contributed by an anonymous-class override such as
+     * `new { val global: Global.this.type = Global.this } with Analyzer`.
+     */
+    private def projectionSingleton(proj: ScProjectionType): Option[ScType] = {
+      val direct = proj.designatorSingletonType.filter(isSingletonType)
+      direct.orElse {
+        val prefixValueType = proj.projected match {
+          case pp: ScProjectionType => pp.designatorSingletonType
+          case _                    => None
+        }
+        prefixValueType match {
+          case Some(ct: ScCompoundType) =>
+            ct.signatureMap.collectFirst {
+              case (sig, tpe) if sig.name == proj.element.name && isSingletonType(proj.actualSubst(tpe)) =>
+                proj.actualSubst(tpe)
+            }
+          case _ => None
+        }
+      }
+    }
+
+    /**
+     * Collapse a stable singleton val-path projection to its underlying singleton
+     * type, to a fixpoint: e.g. `global.analyzer.global` (where `analyzer`'s refinement
+     * declares `val global: Global.this.type`) normalizes to `global`, and the
+     * re-entered chain `global.analyzer.global.analyzer.global` down to the same
+     * `global`. scalac follows a path's singleton type when comparing prefixes of
+     * path-dependent types; without this, a cake whose `this`/`global` is reached
+     * through such an alias (Infer.inferTypedPattern, SCL-21947) yields a non-reduced
+     * prefix chain and a spurious type mismatch. `fuel` bounds the walk.
+     */
+    @annotation.tailrec
+    private def collapseSingletonPath(tp: ScType, fuel: Int): ScType = tp match {
+      case proj: ScProjectionType if fuel > 0 =>
+        val stable = proj.element match {
+          case d: ScTypedDefinition => d.isStable
+          case _                    => false
+        }
+        if (!stable) tp
+        else projectionSingleton(proj) match {
+          case Some(singleton) if singleton ne proj => collapseSingletonPath(singleton, fuel - 1)
+          case _                                    => tp
+        }
+      case _ => tp
+    }
+
+    /** Prefix conformance for two same-named projections; if a direct comparison
+     *  fails, retry after collapsing singleton val-paths on both prefixes. Additive:
+     *  never turns a passing comparison into a failure. */
+    private def conformsProjectedPrefix(projected1: ScType, projected2: ScType): ConstraintsResult = {
+      val direct = conformsInner(projected1, projected2, visited, constraints)
+      if (direct.isRight) direct
+      else {
+        val c1 = collapseSingletonPath(projected1, 8)
+        val c2 = collapseSingletonPath(projected2, 8)
+        if ((c1 ne projected1) || (c2 ne projected2)) conformsInner(c1, c2, visited, constraints)
+        else direct
+      }
+    }
 
     private def addBounds(typeParameter: TypeParameter, `type`: ScType): Unit = {
       val name = typeParameter.typeParamId
@@ -550,9 +622,7 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
           case _ =>
             l match {
               case proj1: ScProjectionType if smartEquivalence(proj1.actualElement, proj2.actualElement) =>
-                val projected1 = proj1.projected
-                val projected2 = proj2.projected
-                result = conformsInner(projected1, projected2, visited, constraints)
+                result = conformsProjectedPrefix(proj1.projected, proj2.projected)
               case _ =>
                 val res = proj2.actualElement match {
                   case syntheticClass: ScSyntheticClass =>
@@ -833,14 +903,10 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
 
       r match {
         case proj1: ScProjectionType if smartEquivalence(proj1.actualElement, proj.actualElement) =>
-          val projected1 = proj.projected
-          val projected2 = proj1.projected
-          result = conformsInner(projected1, projected2, visited, constraints)
+          result = conformsProjectedPrefix(proj.projected, proj1.projected)
           if (result != null) return
         case proj1: ScProjectionType if proj1.actualElement.name == proj.actualElement.name =>
-          val projected1 = proj.projected
-          val projected2 = proj1.projected
-          val t = conformsInner(projected1, projected2, visited, constraints)
+          val t = conformsProjectedPrefix(proj.projected, proj1.projected)
           if (t.isRight) {
             result = t
             return
