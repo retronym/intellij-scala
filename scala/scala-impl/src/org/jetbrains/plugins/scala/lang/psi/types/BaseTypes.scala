@@ -119,6 +119,48 @@ object BaseTypes {
   def get(t: ScType)(implicit context: Context): Seq[ScType] = reduce(dfs(t))
 
   /**
+   * The base type of `t` at class `clazz`, with same-symbol contributions merged —
+   * the analogue of scalac's `t baseType clazz` (used by `AsSeenFromMap`). When `t`
+   * reaches `clazz` through several parents with different arguments/prefixes, the
+   * contributions are combined with `glb`, which performs scalac's variance-aware
+   * `mergePrefixAndArgs` (covariant -> glb of args, contravariant -> lub). This is
+   * deterministic, unlike `iterator(t).find(_.extractClass.contains(clazz))`.
+   */
+  def baseType(t: ScType, clazz: PsiClass)(implicit context: Context): Option[ScType] = {
+    val sameClass = (Iterator(t) ++ iterator(t)).filter(_.extractClass.contains(clazz)).toList
+    if (sameClass.isEmpty) None
+    else Some(sameClass.reduce((a, b) => a.glb(b)))
+  }
+
+  /**
+   * Ordered, deduplicated, same-symbol-merged base type sequence — one entry per
+   * base class, more-derived classes first (an order consistent with subtyping).
+   * Mirrors scalac's `baseTypeSeq` (modulo the exact symbol-id tie-break among
+   * unrelated classes, which is deterministic here but by base-class count + name).
+   */
+  def baseTypeSeq(t: ScType)(implicit context: Context): Seq[ScType] = {
+    val all = (Iterator(t) ++ iterator(t)).toList
+    val perClass = all.flatMap(tp => tp.extractClass.map(_ -> tp)).groupBy(_._1)
+    val merged = perClass.toSeq.map { case (_, ps) => ps.map(_._2).reduce((a, b) => a.glb(b)) }
+    merged.sortBy { tp =>
+      val name = tp.extractClass.flatMap(c => Option(c.getQualifiedName)).getOrElse("")
+      (-baseClassCount(tp), name)
+    }
+  }
+
+  /** Number of transitive base classes — a subtyping-consistent ordering key
+   *  (a subtype has a superset of its supertype's base classes). */
+  private def baseClassCount(t: ScType)(implicit context: Context): Int =
+    t.extractClass match {
+      case Some(c) =>
+        val seen = mutable.Set.empty[PsiClass]
+        def go(c: PsiClass): Unit = if (seen.add(c)) c.getSupers.foreach(go)
+        go(c)
+        seen.size
+      case None => 0
+    }
+
+  /**
    * Returns the direct super types of `tp` in declaration order, resolving
    * aliases / type parameters / this-types / existentials to their underlying
    * types first. `seenAliases` tracks aliases already unwrapped to break
@@ -138,10 +180,21 @@ object BaseTypes {
           case Right(aliased) => go(s(aliased))
           case _              => Seq.empty
         }
-      case ScThisType(clazz)                       => clazz.`type`().toOption match {
-        case Some(inner) => go(inner)
-        case None        => Seq.empty
-      }
+      case ScThisType(clazz)                       =>
+        // `X.this` is known to satisfy `X`'s self type, so its base types must
+        // include the self type's bases too. Without this, types/members reachable
+        // only via the self type are missed — e.g. defeating the seenFromClass walk
+        // in ThisTypeSubstitution.
+        val selfType = clazz match {
+          case td: ScTemplateDefinition => td.selfType
+          case _                        => None
+        }
+        (clazz.`type`().toOption, selfType) match {
+          case (Some(ct), Some(st)) => go(ScCompoundType(Seq(ct, st))(tp.projectContext))
+          case (Some(ct), None)     => go(ct)
+          case (None, Some(st))     => go(st)
+          case (None, None)         => Seq.empty
+        }
       case JavaArrayType(_)                        => Seq(tp.projectContext.stdTypes.Any)
       case ScCompoundType(comps, _, _)             => comps
       case ScAndType(lhs, rhs)                     => Seq(lhs, rhs)
