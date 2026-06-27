@@ -32,6 +32,45 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     assertNothing(errorsFromScalaCode(code))
   }
 
+  // SCL-21947 (whittled from the scala/scala reflect Universe cake): the override's
+  // param/return (internal.this.RefinedType / .Type) must be equated with the
+  // inherited abstract member's (api.this.RefinedType / .Type) through the
+  // self: Universe -> self: SymbolTable cake. scalac accepts this.
+  //
+  // FIXME currently a false positive — should be `assertNothing(...)`. The member
+  // table (MixinNodes/TypeDefinitionMembers.getSignatures) fails to LINK
+  // internal.RefinedType.unapply to the inherited RefinedTypeExtractor.unapply
+  // (its `.supers` is empty), so OverridingAnnotator reports "overrides nothing".
+  // This is the member-table signature-equivalence layer, below the
+  // ThisTypeSubstitution/baseType fixes. Flip to `assertNothing` once fixed.
+  def testSCL21947Cake(): Unit = {
+    val code =
+      """
+        |package api {
+        |  trait Types { self: Universe =>
+        |    type Type
+        |    type RefinedType
+        |    abstract class RefinedTypeExtractor {
+        |      def unapply(tpe: RefinedType): Type
+        |    }
+        |  }
+        |  abstract class Universe extends Types
+        |}
+        |package internal {
+        |  trait Types extends api.Types { self: SymbolTable =>
+        |    abstract class Type
+        |    abstract class RefinedType extends RefinedTypeExtractor {
+        |      override def unapply(tpe: RefinedType): Type
+        |    }
+        |  }
+        |  abstract class SymbolTable extends api.Universe with Types
+        |}
+      """.stripMargin
+    assertMatches(errorsFromScalaCode(code)) {
+      case Error("unapply", "Method 'unapply' overrides nothing") :: Nil =>
+    }
+  }
+
   def testScl13051_2(): Unit = {
     val code =
       s"""
