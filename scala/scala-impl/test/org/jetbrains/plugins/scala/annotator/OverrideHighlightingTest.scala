@@ -33,16 +33,11 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   }
 
   // SCL-21947 (whittled from the scala/scala reflect Universe cake): the override's
-  // param/return (internal.this.RefinedType / .Type) must be equated with the
-  // inherited abstract member's (api.this.RefinedType / .Type) through the
-  // self: Universe -> self: SymbolTable cake. scalac accepts this.
-  //
-  // FIXME currently a false positive — should be `assertNothing(...)`. The member
-  // table (MixinNodes/TypeDefinitionMembers.getSignatures) fails to LINK
-  // internal.RefinedType.unapply to the inherited RefinedTypeExtractor.unapply
-  // (its `.supers` is empty), so OverridingAnnotator reports "overrides nothing".
-  // This is the member-table signature-equivalence layer, below the
-  // ThisTypeSubstitution/baseType fixes. Flip to `assertNothing` once fixed.
+  // param/return is `SymbolTable.this.RefinedType` (internal.Types is self: SymbolTable,
+  // so `this` is the self type), while the inherited abstract member's, substituted,
+  // is `Types.this.RefinedType`. These denote the same instance (SymbolTable extends
+  // Types and Types's self type is SymbolTable), so ScThisType equivalence must treat
+  // them as equal — otherwise "unapply overrides nothing". scalac accepts the code.
   def testSCL21947Cake(): Unit = {
     val code =
       """
@@ -66,9 +61,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
         |  abstract class SymbolTable extends api.Universe with Types
         |}
       """.stripMargin
-    assertMatches(errorsFromScalaCode(code)) {
-      case Error("unapply", "Method 'unapply' overrides nothing") :: Nil =>
-    }
+    assertNothing(errorsFromScalaCode(code))
   }
 
   def testScl13051_2(): Unit = {
