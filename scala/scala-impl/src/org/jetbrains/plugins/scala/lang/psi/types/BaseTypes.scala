@@ -3,6 +3,7 @@ package org.jetbrains.plugins.scala.lang.psi.types
 import com.intellij.psi.PsiClass
 import org.jetbrains.plugins.scala.extensions.PsiTypeExt
 import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScTypeAlias, ScTypeAliasDefinition}
+import org.jetbrains.plugins.scala.lang.psi.api.toplevel.ScTypeParametersOwner
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTemplateDefinition
 import org.jetbrains.plugins.scala.lang.psi.types.api._
 import org.jetbrains.plugins.scala.lang.psi.types.api.designator.{ScDesignatorType, ScProjectionType, ScThisType}
@@ -29,8 +30,38 @@ object BaseTypes {
   def baseType(t: ScType, clazz: PsiClass)(implicit context: Context): Option[ScType] = {
     val sameClass = (Iterator(t) ++ iterator(t)).filter(_.extractClass.contains(clazz)).toList
     if (sameClass.isEmpty) None
-    else Some(sameClass.reduce((a, b) => a.glb(b)))
+    else Some(mergeSameClass(sameClass, clazz))
   }
+
+  /**
+   * Merge several base types of the same class into one — scalac's
+   * `mergePrefixAndArgs`: combine arguments per position by the class's variance
+   * (covariant -> glb, contravariant -> lub, invariant -> kept). IntelliJ's plain
+   * `glb` does NOT do this — for incomparable args it yields the intersection of
+   * the applied types (`Box[Dog] with Box[Cat]`) rather than the merge
+   * (`Box[Dog with Cat]`), so we do it explicitly.
+   */
+  private def mergeSameClass(types: Seq[ScType], clazz: PsiClass)(implicit context: Context): ScType =
+    if (types.lengthCompare(1) <= 0) types.head
+    else clazz match {
+      case owner: ScTypeParametersOwner =>
+        val variances = owner.typeParameters.map(_.variance)
+        types.reduce { (a, b) =>
+          (a, b) match {
+            case (ParameterizedType(designator, as), ParameterizedType(_, bs))
+                if as.sizeCompare(bs) == 0 && as.sizeCompare(variances) == 0 =>
+              val merged = variances.indices.map { i =>
+                val v = variances(i)
+                if (v.isCovariant) as(i).glb(bs(i))
+                else if (v.isContravariant) as(i).lub(bs(i))
+                else as(i) // invariant: contributions are equivalent
+              }
+              ScParameterizedType(designator, merged)
+            case _ => a.glb(b)
+          }
+        }
+      case _ => types.reduce((a, b) => a.glb(b))
+    }
 
   /**
    * Ordered, deduplicated, same-symbol-merged base type sequence — one entry per
@@ -41,7 +72,7 @@ object BaseTypes {
   def baseTypeSeq(t: ScType)(implicit context: Context): Seq[ScType] = {
     val all = (Iterator(t) ++ iterator(t)).toList
     val perClass = all.flatMap(tp => tp.extractClass.map(_ -> tp)).groupBy(_._1)
-    val merged = perClass.toSeq.map { case (_, ps) => ps.map(_._2).reduce((a, b) => a.glb(b)) }
+    val merged = perClass.toSeq.map { case (c, ps) => mergeSameClass(ps.map(_._2), c) }
     merged.sortBy { tp =>
       val name = tp.extractClass.flatMap(c => Option(c.getQualifiedName)).getOrElse("")
       (-baseClassCount(tp), name)
