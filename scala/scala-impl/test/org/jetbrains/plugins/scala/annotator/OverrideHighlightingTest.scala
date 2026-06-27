@@ -32,6 +32,38 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     assertNothing(errorsFromScalaCode(code))
   }
 
+  // SCL-21947 (whittled from the scala/scala reflect Universe cake): the override's
+  // param/return is `SymbolTable.this.RefinedType` (internal.Types is self: SymbolTable,
+  // so `this` is the self type), while the inherited abstract member's, substituted,
+  // is `Types.this.RefinedType`. These denote the same instance (SymbolTable extends
+  // Types and Types's self type is SymbolTable), so ScThisType equivalence must treat
+  // them as equal — otherwise "unapply overrides nothing". scalac accepts the code.
+  def testSCL21947Cake(): Unit = {
+    val code =
+      """
+        |package api {
+        |  trait Types { self: Universe =>
+        |    type Type
+        |    type RefinedType
+        |    abstract class RefinedTypeExtractor {
+        |      def unapply(tpe: RefinedType): Type
+        |    }
+        |  }
+        |  abstract class Universe extends Types
+        |}
+        |package internal {
+        |  trait Types extends api.Types { self: SymbolTable =>
+        |    abstract class Type
+        |    abstract class RefinedType extends RefinedTypeExtractor {
+        |      override def unapply(tpe: RefinedType): Type
+        |    }
+        |  }
+        |  abstract class SymbolTable extends api.Universe with Types
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
   def testScl13051_2(): Unit = {
     val code =
       s"""
