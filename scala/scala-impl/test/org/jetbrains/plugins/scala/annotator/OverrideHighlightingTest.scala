@@ -164,6 +164,67 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     assertNothing(errorsFromScalaCode(code))
   }
 
+  // SCL-21947, fifth shape: like GenBlock, but the Block-typed value comes from a
+  // METHOD return (`gen.blk: Block`, as-seen-from `gen`) via an intermediate val,
+  // not a written `gen.global.Block`. The asSeenFrom-computed type must still
+  // collapse `gen.global` to `global` for `temp <: Tree` to hold. scalac accepts it.
+  def testSCL21947GenBlkMethod(): Unit = {
+    System.setProperty("scala.tck.trace", "1")
+    val code =
+      """
+        |abstract class TreeGen {
+        |  val global: SymbolTable
+        |  import global._
+        |  def blk: Block = null
+        |}
+        |abstract class SymbolTable {
+        |  class Tree
+        |  class Block extends Tree
+        |  val gen = new TreeGen { val global: SymbolTable.this.type = SymbolTable.this }
+        |}
+        |trait Analyzer { val global: SymbolTable }
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |  val temp = gen.blk
+        |  val tree: Tree = temp
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, sixth shape (scala/scala Typers + Global's `override object gen`):
+  // `gen` is a `val` in SymbolTable, overridden as an `object` in Global with the
+  // early-init `val global: Global.this.type`. Reaching `gen.blk` via `import
+  // global._` binds `gen` to the SymbolTable val (whose refinement is relative to
+  // SymbolTable), so the prefix `gen.global` does not collapse to `global` and
+  // `temp <: Tree` was a false mismatch. scalac accepts it.
+  def testSCL21947GenObject(): Unit = {
+    val code =
+      """
+        |trait IGen {
+        |  val global: SymbolTable
+        |  import global._
+        |  def blk: Block = null
+        |}
+        |trait NscGen extends IGen { val global: Global }
+        |class SymbolTable {
+        |  class Tree
+        |  class Block extends Tree
+        |  val gen = new IGen { val global: SymbolTable.this.type = SymbolTable.this }
+        |}
+        |class Global extends SymbolTable {
+        |  override object gen extends { val global: Global.this.type = Global.this } with NscGen
+        |}
+        |trait Analyzer { val global: Global }
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |  val temp = gen.blk
+        |  val tree: Tree = temp
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
   def testScl13051_2(): Unit = {
     val code =
       s"""
