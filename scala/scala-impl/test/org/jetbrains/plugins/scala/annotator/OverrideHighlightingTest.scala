@@ -140,6 +140,30 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     assertNothing(errorsFromScalaCode(code))
   }
 
+  // SCL-21947, fourth shape: the singleton val-path `gen.global` (refined to
+  // `Global.this.type`) again fails to collapse to `global`, but this time the
+  // conformance crosses inheritance: `gen.global.Block <: Tree` (= `global.Tree`)
+  // because `Block extends Tree`. The same-member case (`gen.global.Tree`) is fine;
+  // the across-inheritance case was a false "type mismatch". scalac accepts it.
+  def testSCL21947GenBlock(): Unit = {
+    val code =
+      """
+        |trait Gen { val global: Global }
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |  def x: Tree = (null: gen.global.Tree)
+        |  def y: Tree = (null: gen.global.Block)
+        |}
+        |trait Analyzer extends Typers { val global: Global }
+        |class Global {
+        |  class Tree
+        |  class Block extends Tree
+        |  lazy val gen = new { val global: Global.this.type = Global.this } with Gen
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
   def testScl13051_2(): Unit = {
     val code =
       s"""
