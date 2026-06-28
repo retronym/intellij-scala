@@ -12,6 +12,7 @@ import org.jetbrains.plugins.scala.lang.psi.api.statements.params._
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.{ScTypeParametersOwner, ScTypedDefinition}
 import org.jetbrains.plugins.scala.lang.psi.impl.base.literals.ScIntegerLiteralImpl
 import org.jetbrains.plugins.scala.lang.psi.impl.toplevel.synthetic.ScSyntheticClass
+import org.jetbrains.plugins.scala.lang.psi.impl.toplevel.typedef.TypeDefinitionMembers
 import org.jetbrains.plugins.scala.lang.psi.types.ScalaConformance._
 import org.jetbrains.plugins.scala.lang.psi.types.api._
 import org.jetbrains.plugins.scala.lang.psi.types.api.designator.{DesignatorOwner, ScDesignatorType, ScProjectionType, ScThisType}
@@ -204,23 +205,48 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
      * singleton type contributed by an anonymous-class override such as
      * `new { val global: Global.this.type = Global.this } with Analyzer`.
      */
-    private def projectionSingleton(proj: ScProjectionType): Option[ScType] = {
-      val direct = proj.designatorSingletonType.filter(isSingletonType)
-      direct.orElse {
-        val prefixValueType = proj.projected match {
-          case pp: ScProjectionType => pp.designatorSingletonType
-          case _                    => None
-        }
-        prefixValueType match {
-          case Some(ct: ScCompoundType) =>
-            ct.signatureMap.collectFirst {
-              case (sig, tpe) if sig.name == proj.element.name && isSingletonType(proj.actualSubst(tpe)) =>
-                proj.actualSubst(tpe)
-            }
-          case _ => None
-        }
+    /** Singleton type of member `e` projected through `prefix`, if it is one. */
+    private def memberSingletonThrough(prefix: ScType, e: ScTypedDefinition): Option[ScType] =
+      ScProjectionType(prefix, e) match {
+        case p: ScProjectionType => p.designatorSingletonType.filter(isSingletonType)
+        case _                   => None
       }
-    }
+
+    /** A compound prefix carries the override directly in its refinement. */
+    private def compoundRefinementSingleton(proj: ScProjectionType): Option[ScType] =
+      proj.projected match {
+        case pp: ScProjectionType =>
+          pp.designatorSingletonType match {
+            case Some(ct: ScCompoundType) =>
+              ct.signatureMap.collectFirst {
+                case (sig, tpe) if sig.name == proj.element.name && isSingletonType(proj.actualSubst(tpe)) => proj.actualSubst(tpe)
+              }
+            case _ => None
+          }
+        case _ => None
+      }
+
+    /**
+     * A class/object prefix: re-resolve the member override-aware (scalac's
+     * `pre.memberType(sym)`) and take the member whose type, projected through the
+     * prefix, is itself a singleton — the `this.type` override (anonymous-class /
+     * object early-init, or a plain override) rather than the abstract declaration.
+     * Covers `override object gen { val global = … }`, whose `designatorSingletonType`
+     * is `None`.
+     */
+    private def memberOverrideSingleton(proj: ScProjectionType): Option[ScType] =
+      proj.projected.extractClass.flatMap { cls =>
+        TypeDefinitionMembers.getSignatures(cls).forName(proj.element.name).iterator
+          .map(_.namedElement)
+          .collect { case td: ScTypedDefinition if td.isStable => td }
+          .flatMap(e => memberSingletonThrough(proj.projected, e).iterator)
+          .nextOption()
+      }
+
+    private def projectionSingleton(proj: ScProjectionType): Option[ScType] =
+      proj.designatorSingletonType.filter(isSingletonType)
+        .orElse(compoundRefinementSingleton(proj))
+        .orElse(memberOverrideSingleton(proj))
 
     /**
      * Collapse a stable singleton val-path projection to its underlying singleton
