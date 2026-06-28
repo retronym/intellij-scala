@@ -866,6 +866,26 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
     }
 
     override def visitProjectionType(proj: ScProjectionType): Unit = {
+      // SCL-21947: if either side's prefix is a collapsible singleton val-path
+      // (e.g. `gen.global` -> `global`, via an anonymous-class refinement override),
+      // try with the collapsed prefix(es) first. The collapsed path is an equivalent
+      // type, so a success here is sound; on failure we fall through to the normal
+      // logic unchanged. Unlike `conformsProjectedPrefix` (same-member prefix only)
+      // this also covers conformance that crosses inheritance, e.g.
+      // `gen.global.Block <:< global.Tree` (`Block extends Tree`).
+      val cL = collapseSingletonPath(proj.projected, 8)
+      val lCollapsed = if (cL ne proj.projected) ScProjectionType(cL, proj.element) else proj
+      val rCollapsed = r match {
+        case rp: ScProjectionType =>
+          val cR = collapseSingletonPath(rp.projected, 8)
+          if (cR ne rp.projected) ScProjectionType(cR, rp.element) else r
+        case _ => r
+      }
+      if ((lCollapsed ne proj) || (rCollapsed ne r)) {
+        val t = conformsInner(lCollapsed, rCollapsed, visited, constraints)
+        if (t.isRight) { result = t; return }
+      }
+
       var rightVisitor: ScalaTypeVisitor =
         new ValDesignatorSimplification with UndefinedSubstVisitor with AbstractVisitor
           with ParameterizedAbstractVisitor {}
