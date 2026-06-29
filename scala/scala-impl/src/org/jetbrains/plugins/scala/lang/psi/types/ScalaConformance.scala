@@ -443,6 +443,10 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
         }
       }
 
+      // REVIEW: this `wideType eq Null` arm may be dead — the `null` literal types as the
+      // `Null` std type (ScNullLiteralImpl.innerType), not a ScLiteralType, so no source
+      // shape is known to produce a null-wide ScLiteralType. Kept (sharing `admitsNull`
+      // with visitStdType) for safety/consistency; revisit whether it can be removed.
       override def visitLiteralType(lt: ScLiteralType): Unit = {
         if (lt.wideType.eq(Null) && admitsNull) result = constraints
       }
