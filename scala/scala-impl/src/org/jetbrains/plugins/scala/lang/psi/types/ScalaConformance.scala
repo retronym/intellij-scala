@@ -273,20 +273,6 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
       case _ => tp
     }
 
-    /** Prefix conformance for two same-named projections; if a direct comparison
-     *  fails, retry after collapsing singleton val-paths on both prefixes. Additive:
-     *  never turns a passing comparison into a failure. */
-    private def conformsProjectedPrefix(projected1: ScType, projected2: ScType): ConstraintsResult = {
-      val direct = conformsInner(projected1, projected2, visited, constraints)
-      if (direct.isRight) direct
-      else {
-        val c1 = collapseSingletonPath(projected1, 8)
-        val c2 = collapseSingletonPath(projected2, 8)
-        if ((c1 ne projected1) || (c2 ne projected2)) conformsInner(c1, c2, visited, constraints)
-        else direct
-      }
-    }
-
     private def addBounds(typeParameter: TypeParameter, `type`: ScType): Unit = {
       val name = typeParameter.typeParamId
       constraints = constraints
@@ -648,7 +634,7 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
           case _ =>
             l match {
               case proj1: ScProjectionType if smartEquivalence(proj1.actualElement, proj2.actualElement) =>
-                result = conformsProjectedPrefix(proj1.projected, proj2.projected)
+                result = conformsInner(proj1.projected, proj2.projected, visited, constraints)
               case _ =>
                 val res = proj2.actualElement match {
                   case syntheticClass: ScSyntheticClass =>
@@ -896,8 +882,8 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
       // (e.g. `gen.global` -> `global`, via an anonymous-class refinement override),
       // try with the collapsed prefix(es) first. The collapsed path is an equivalent
       // type, so a success here is sound; on failure we fall through to the normal
-      // logic unchanged. Unlike `conformsProjectedPrefix` (same-member prefix only)
-      // this also covers conformance that crosses inheritance, e.g.
+      // logic unchanged. Collapsing both prefixes here (rather than only same-element
+      // prefixes) covers conformance that crosses inheritance, e.g.
       // `gen.global.Block <:< global.Tree` (`Block extends Tree`).
       val cL = collapseSingletonPath(proj.projected, 8)
       val lCollapsed = if (cL ne proj.projected) ScProjectionType(cL, proj.element) else proj
@@ -949,10 +935,10 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
 
       r match {
         case proj1: ScProjectionType if smartEquivalence(proj1.actualElement, proj.actualElement) =>
-          result = conformsProjectedPrefix(proj.projected, proj1.projected)
+          result = conformsInner(proj.projected, proj1.projected, visited, constraints)
           if (result != null) return
         case proj1: ScProjectionType if proj1.actualElement.name == proj.actualElement.name =>
-          val t = conformsProjectedPrefix(proj.projected, proj1.projected)
+          val t = conformsInner(proj.projected, proj1.projected, visited, constraints)
           if (t.isRight) {
             result = t
             return
