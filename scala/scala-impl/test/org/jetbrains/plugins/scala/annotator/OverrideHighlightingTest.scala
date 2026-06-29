@@ -343,6 +343,45 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     assertNothing(errorsFromScalaCode(code))
   }
 
+  // SCL-21947, tenth shape (scala/scala nsc MutableSettings): a refinement placed on
+  // the UPPER BOUND of an abstract type member, refining a member (`type T`) that the
+  // refined component inherits TRANSITIVELY.
+  //
+  //   type Setting        <: SettingValue
+  //   type BooleanSetting <: Setting { type T = Boolean }
+  //
+  // `def value: T` lives in `SettingValue` (where `T` is abstract, from
+  // `AbsSettingValue`). Selecting `.value` on a `BooleanSetting` must read the bound's
+  // `{ type T = Boolean }`, so its type is `BooleanSetting#T` (=:= Boolean) and the
+  // assignment to `Boolean` holds. IntelliJ instead left the prefix as the raw
+  // `SettingValue.this`, yielding the abstract `SettingValue.this.T` — "Expression of
+  // type SettingValue.this.T doesn't conform to expected type Boolean". scalac accepts.
+  //
+  // ROOT CAUSE (fixed): re-anchoring `SettingValue.this` onto the receiver goes through
+  // `ThisTypeSubstitution`, whose `hasSameOrInheritor` scans the compound's components
+  // for `SettingValue`. It widened a component that is a TYPE PARAMETER to its bound but
+  // not one that is an abstract TYPE ALIAS (`type Setting <: SettingValue`), so it never
+  // saw `SettingValue` under `Setting`'s bound and skipped the substitution. The
+  // `BooleanSetting1` form (`Setting with SettingValue { type T = Boolean }`) was already
+  // green because `SettingValue` is then a direct (class) component.
+  def testSCL21947MutableSettings(): Unit = {
+    val code =
+      """
+        |abstract class AbsSettings {
+        |  class AbsSettingValue { type T }
+        |  trait SettingValue extends AbsSettingValue { def value: T }
+        |}
+        |abstract class MutableSettings extends AbsSettings {
+        |  type Setting <: SettingValue
+        |  type BooleanSetting  <: Setting {type T = Boolean}
+        |  type BooleanSetting1 <: Setting with SettingValue {type T = Boolean}
+        |  val viaBound:    Boolean = (??? : BooleanSetting).value
+        |  val viaCompound: Boolean = (??? : BooleanSetting1).value
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
   def testScl13051_2(): Unit = {
     val code =
       s"""
