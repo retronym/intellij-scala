@@ -6,7 +6,7 @@ import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, RecursionMa
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
 import org.jetbrains.plugins.scala.lang.psi.api.base.patterns.ScBindingPattern
-import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScTypeAlias, ScTypeAliasDefinition}
+import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScTypeAlias, ScTypeAliasDeclaration, ScTypeAliasDefinition}
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.ScTypedDefinition
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef._
 import org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiManager
@@ -231,6 +231,15 @@ final class ScProjectionType private(val projected: ScType,
         val sameElements = ScEquivalenceUtil.smartEquivalence(lElement, rElement) || {
           lElement.name == rElement.name &&
             (isEligibleForPrefixUnification(projected) || isEligibleForPrefixUnification(p1))
+        } || {
+          // A class realizing an abstract type member (e.g. `class Symbol` overriding
+          // `type Symbol >: Null`) — different PSI elements with the same name in the
+          // same linearization. Treat as equivalent when one is an abstract type alias
+          // and the other is a class, mirroring scalac's memberType. (SCL-21947)
+          lElement.name == rElement.name && (
+            (lElement.is[ScTypeAliasDeclaration] && rElement.is[PsiClass]) ||
+            (lElement.is[PsiClass] && rElement.is[ScTypeAliasDeclaration])
+          )
         }
 
         if (sameElements) projected.equiv(p1, constraints, falseUndef)
@@ -240,7 +249,7 @@ final class ScProjectionType private(val projected: ScType,
               this.equiv(lower, constraints, falseUndef)
             case _ => ConstraintsResult.Left
           }
-      case ScThisType(_) =>
+      case thisType @ ScThisType(thisClazz) =>
         element match {
           case _: ScObject                        => ConstraintsResult.Left
           case t: ScTypedDefinition if t.isStable =>
@@ -248,6 +257,14 @@ final class ScProjectionType private(val projected: ScType,
               case Right(singleton: DesignatorOwner) if singleton.isSingleton =>
                 val newSubst = actualSubst.followed(ScSubstitutor(projected))
                 r.equiv(newSubst(singleton), constraints, falseUndef)
+              // Cake-pattern stable path: `pre.global` (this projection) where `global: Global`
+              // (not singleton-typed) vs `Global.this`. When the val's type class matches the
+              // this-type's class, they denote the same instance. (SCL-21947)
+              case Right(tp) =>
+                tp.extractClass match {
+                  case Some(cls) if ScEquivalenceUtil.areClassesEquivalent(thisClazz, cls) => constraints
+                  case _ => ConstraintsResult.Left
+                }
               case _ => ConstraintsResult.Left
             }
           case _ => ConstraintsResult.Left
