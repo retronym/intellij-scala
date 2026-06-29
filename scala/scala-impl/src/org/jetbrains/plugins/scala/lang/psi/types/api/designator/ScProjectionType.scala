@@ -178,8 +178,25 @@ final class ScProjectionType private(val projected: ScType,
       case _ => ConstraintsResult.Left
     }
 
+    // Override-aware singleton collapse (scalac's `pre.memberType`). `checkDesignatorType`
+    // above uses the prefix designator's statically-declared type, which is not a
+    // singleton when that designator points at an ABSTRACT member (e.g.
+    // `SymbolLoaders#symbolTable: SymbolTable`) whose singleton-ness comes only from an
+    // override further down the prefix's class (`symbolTable: global.type`). Consult the
+    // override-aware `designatorSingletonType` to recover the underlying singleton and
+    // compare. Used only as a fallback, so it never turns a passing comparison into a
+    // failure (SCL-21947, the BrowsingLoaders.enterIfNew override-matching case).
+    def checkOverrideSingleton(proj: ScProjectionType, other: ScType): ConstraintsResult =
+      proj.designatorSingletonType match {
+        case Some(tp) if ScProjectionType.isSingletonLike(tp) => tp.equiv(other, constraints, falseUndef)
+        case _                                                => ConstraintsResult.Left
+      }
+
     val desRes = checkDesignatorType(actualElement, r)
     if (desRes.isRight) return desRes
+
+    val ovrRes = checkOverrideSingleton(this, r)
+    if (ovrRes.isRight) return ovrRes
 
     r match {
       case tpt: ScTypePolymorphicType =>
@@ -204,6 +221,9 @@ final class ScProjectionType private(val projected: ScType,
       case proj2 @ ScProjectionType(p1, _) =>
         val desRes = checkDesignatorType(proj2.actualElement, this)
         if (desRes.isRight) return desRes
+
+        val ovrRes = checkOverrideSingleton(proj2, this)
+        if (ovrRes.isRight) return ovrRes
 
         val lElement = actualElement
         val rElement = proj2.actualElement
