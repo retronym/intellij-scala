@@ -40,6 +40,15 @@ final case class ScThisType(override val element: ScTemplateDefinition) extends 
           case Right(singleton: DesignatorOwner) if singleton.isSingleton =>
             val newSubst = p.actualSubst.followed(ScSubstitutor(tp))
             this.equiv(newSubst(singleton), constraints, falseUndef)
+          // Cake-pattern stable path: `pre.global` where `global: Global` (not singleton-typed)
+          // but `Global.this` and `pre.global` denote the same instance when the val's type
+          // class matches the this-type's class. scalac unifies these via asSeenFrom; mirror
+          // that here by checking class equivalence. (SCL-21947, override signature matching)
+          case Right(tp) =>
+            tp.extractClass match {
+              case Some(cls) if ScEquivalenceUtil.areClassesEquivalent(element, cls) => constraints
+              case _ => ConstraintsResult.Left
+            }
           case _ => ConstraintsResult.Left
         }
       case _ => ConstraintsResult.Left
