@@ -274,6 +274,75 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     assertNothing(errorsFromScalaCode(code))
   }
 
+  // SCL-21947, eighth shape (scala/scala nsc BrowsingLoaders.enterIfNew): the
+  // path-dependent param `Symbol` is bound through a SINGLETON ALIAS, not a self type.
+  // `SymbolLoaders` declares `val symbolTable: SymbolTable` and `import symbolTable._`,
+  // so the inherited abstract member's param is `symbolTable.Symbol`. The override (via
+  // `import global._`) writes `global.Symbol`. They are the same type only because the
+  // intermediate `GlobalSymbolLoaders` aliases `val symbolTable: global.type = global`,
+  // which scalac collapses (`symbolTable.Symbol =:= global.Symbol`). scalac accepts it.
+  //
+  // ROOT CAUSE (fixed): override matching compares params via EQUIVALENCE, not
+  // conformance. `ScProjectionType.equivInner` sees both projections share element
+  // `Symbol`, so it recurses to the prefixes `symbolTable` =?= `global`. Its singleton
+  // collapse, `checkDesignatorType`, took the prefix designator's RAW declared type
+  // (`actualSubst(td.type())`) — but `td` is the *abstract* `SymbolLoaders.symbolTable:
+  // SymbolTable` (the designator points to the declaration-site symbol; asSeenFrom does
+  // not re-resolve member overrides inside a prefix). `SymbolTable` is not a singleton,
+  // so the collapse bailed and equiv returned Left -> "overrides nothing". Fix: equivInner
+  // now also consults the override-aware `designatorSingletonType`
+  // (`ScProjectionType.overrideSingletonOf`, scalac's `pre.memberType`), which the
+  // conformance side already used. Confirmed by a differential: declaring `symbolTable:
+  // global.type` directly in `SymbolLoaders` (no override) was already green.
+  def testSCL21947BrowsingLoaders(): Unit = {
+    val code =
+      """
+        |trait SymbolTable {
+        |  type Symbol <: Null
+        |}
+        |abstract class SymbolLoaders {
+        |  val symbolTable: SymbolTable
+        |  import symbolTable._
+        |  protected def useSymbol(sym: Symbol): Unit
+        |}
+        |abstract class GlobalSymbolLoaders extends SymbolLoaders {
+        |  val global: SymbolTable
+        |  val symbolTable: global.type = global
+        |}
+        |abstract class BrowsingLoaders extends GlobalSymbolLoaders {
+        |  val global: SymbolTable
+        |  import global._
+        |  override protected def useSymbol(sym: Symbol): Unit
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, ninth shape (scala/scala reflect AnnotationInfos.Annotatable /
+  // Symbols.Symbol). A generic cake trait `Annotatable[Self] { self: Self => def
+  // foo(): Self }` lives in component `AnnotationInfos` (self: SymbolTable); the
+  // sibling component `Symbols` declares `Symbol extends Annotatable[Symbol]`, which
+  // overrides `foo` returning `this.type` (covariant over `Self` = `Symbol`, since
+  // `Symbol.this.type <:< Symbol`). IntelliJ reported "foo overrides nothing".
+  // scalac accepts it.
+  def testSCL21947Annotatable(): Unit = {
+    val code =
+      """
+        |trait AnnotationInfos { self: SymbolTable =>
+        |  trait Annotatable[Self] { self: Self =>
+        |    def foo(): Self
+        |  }
+        |}
+        |trait Symbols { self: SymbolTable =>
+        |  abstract class Symbol extends Annotatable[Symbol] {
+        |    override def foo(): this.type = this
+        |  }
+        |}
+        |trait SymbolTable extends AnnotationInfos with Symbols
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
   def testScl13051_2(): Unit = {
     val code =
       s"""
