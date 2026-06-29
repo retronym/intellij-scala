@@ -427,6 +427,20 @@ trait ScalaConformance extends api.Conformance with TypeVariableUnification {
             this case for checking: val x: T = null
             This is good if T class type: T <: AnyRef and !(T <: NotNull)
            */
+          // An abstract type/alias with an explicit lower bound that already admits Null
+          // (e.g. `type Pos >: Null`) accepts null directly: `Lo <: T` and `Null <: Lo`,
+          // so `Null <: T` — even when T's upper bound is only `Any` (so `T </: AnyRef`).
+          // Without this, the `l.conforms(AnyRef)` reference-type heuristic below spuriously
+          // rejects it (SCL-21947 reduction: `new NonemptyAttachments[Pos]`, `Pos` an
+          // abstract member with `>: Null`).
+          val nullAdmittedByLowerBound = l match {
+            case AliasType(_, Right(lower), _, effectivelyOpaque) if !effectivelyOpaque => x.conforms(lower)
+            case _                                                                      => false
+          }
+          if (nullAdmittedByLowerBound) {
+            result = constraints
+            return
+          }
           if (!l.conforms(AnyRef)) {
             result = ConstraintsResult.Left
             return
