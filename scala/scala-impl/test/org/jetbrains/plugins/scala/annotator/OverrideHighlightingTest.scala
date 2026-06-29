@@ -382,6 +382,71 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     assertNothing(errorsFromScalaCode(code))
   }
 
+  // SCL-21947, eleventh shape (scala/scala nsc ExplicitOuter.OuterPathTransformer):
+  // selecting an inner class through an OBJECT member reached on a stable val path.
+  //
+  //   class C2 extends global.explicitOuter.OuterPathTransformer(null: global.analyzer.Typer)
+  //
+  // `OuterPathTransformer`'s ctor param is `analyzer.Typer` = `ExplicitOuter.this.global.
+  // analyzer.Typer`. As-seen-from the receiver `global.explicitOuter`, that must become
+  // `global.explicitOuter.global.analyzer.Typer` and then collapse (`explicitOuter.global
+  // =:= global`) to `global.analyzer.Typer` — matching the argument. scalac accepts it.
+  //
+  // ROOT CAUSE (fixed): resolving the qualifier `global` (a stable val) recorded its
+  // `fromType` as the WIDENED declared type `Global`, not the singleton path
+  // `Repro.this.global.type`. So the next selection — the OBJECT `explicitOuter` — was
+  // projected as `Global#explicitOuter` (dropping the instance prefix) in
+  // `ScStableCodeReferenceImpl.processQualifierResolveResult`. The ctor's substitutor then
+  // re-anchored `ExplicitOuter.this` onto `Global#explicitOuter`, yielding the un-collapsible
+  // `Global#explicitOuter.global.analyzer.Typer` -> false "type mismatch". Fix: for a stable
+  // qualifier, record the singleton path as `fromType` (member lookup still runs over the
+  // widened type), so the object selection keeps the path and asSeenFrom collapses it.
+  def testSCL21947OuterPathTransformer(): Unit = {
+    val code =
+      """
+        |trait Symbols { self: SymbolTable =>
+        |  class Symbol
+        |}
+        |trait Trees { self: SymbolTable =>
+        |  abstract class AstTransformer {
+        |    def currentClass: Symbol = ???
+        |  }
+        |}
+        |abstract class SymbolTable extends Symbols with Trees
+        |trait Typers { self: Analyzer =>
+        |  class Typer
+        |}
+        |trait Analyzer extends Typers {
+        |  val global: Global
+        |}
+        |trait TypingTransformers {
+        |  val global: Global
+        |  import global._
+        |  protected def newRootLocalTyper(unit: CompilationUnit): global.analyzer.Typer = ???
+        |  abstract class TypingTransformer(initLocalTyper: global.analyzer.Typer) extends global.AstTransformer {
+        |    def this(unit: CompilationUnit) = this(newRootLocalTyper(unit))
+        |  }
+        |}
+        |trait ExplicitOuter extends TypingTransformers {
+        |  import global._
+        |  abstract class OuterPathTransformer(initLocalTyper: analyzer.Typer) extends TypingTransformer(initLocalTyper)
+        |}
+        |abstract class Global extends SymbolTable {
+        |  class CompilationUnit
+        |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+        |  object explicitOuter extends { val global: Global.this.type = Global.this } with ExplicitOuter
+        |}
+        |abstract class SubComponent {
+        |  val global: Global
+        |}
+        |abstract class Repro extends SubComponent {
+        |  abstract class C2
+        |    extends global.explicitOuter.OuterPathTransformer(null: global.analyzer.Typer)
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
   def testScl13051_2(): Unit = {
     val code =
       s"""
