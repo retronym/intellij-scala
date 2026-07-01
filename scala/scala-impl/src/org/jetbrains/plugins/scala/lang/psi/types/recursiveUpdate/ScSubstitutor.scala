@@ -76,6 +76,11 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
 
       currentUpdate(scType, variance) match {
         case ReplaceWith(res) =>
+          currentUpdate match {
+            case tts: ThisTypeSubstitution if (res ne scType) && (fromIndex + 1) < substitutions.length =>
+              ThisTypeSubstitution.traceChainFeed(tts, scType, res, substitutions.length - fromIndex - 1)
+            case _ =>
+          }
           next.recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
         case Stop => scType
         case ProcessSubtypes =>
@@ -201,10 +206,10 @@ object ScSubstitutor {
   }
 
   def apply(updateThisType: ScType): ScSubstitutor =
-    ScSubstitutor(ThisTypeSubstitution(updateThisType, null))
+    ScSubstitutor(ThisTypeSubstitution.traceNew(ThisTypeSubstitution(updateThisType, null)))
 
   def apply(updateThisType: ScType, seenFromClass: PsiClass): ScSubstitutor =
-    ScSubstitutor(ThisTypeSubstitution(updateThisType, seenFromClass))
+    ScSubstitutor(ThisTypeSubstitution.traceNew(ThisTypeSubstitution(updateThisType, seenFromClass)))
 
   def paramToExprType(parameters: Seq[Parameter], expressions: Seq[Expression], useExpected: Boolean = true): ScSubstitutor =
     ScSubstitutor(ParamsToExprs(parameters, expressions, useExpected))
