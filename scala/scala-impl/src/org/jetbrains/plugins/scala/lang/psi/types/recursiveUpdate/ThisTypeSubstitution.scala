@@ -251,18 +251,24 @@ private object ThisTypeSubstitution {
 
   def idOf(x: AnyRef): String = Integer.toHexString(System.identityHashCode(x))
 
-  // ── PROBE 3: canonicalize-at-construction (scala.asf.canonicalize) ────────────
-  // Thesis: the guard is a feedback-loop breaker for non-canonical path spellings
-  // (`…analyzer.global` for `…global`) being fed back in as substitutor targets.
-  // If targets are collapsed to canonical spelling AT THE CHOKEPOINT, the loop
-  // should never close and the guard should stop firing. Mirrors the (private)
+  // ── Canonicalize-at-mint (ON by default; disable with -Dscala.asf.nocanon) ────
+  // Collapse non-canonical singleton val-path spellings (`…analyzer.global` for
+  // `…global`) where they are minted: when a substitution pass rebuilds a
+  // projection over a rewritten prefix (SubtypeUpdater.updateProjectionType), and
+  // at the ScSubstitutor construction chokepoints. Mirrors the (private)
   // ScalaConformance collapse: own designatorSingletonType, then the compound
   // prefix's refinement (`new { val global: Global.this.type } with Analyzer`).
-  // NOTE: verified green when forced on across OverrideHighlightingTest +
-  // TypeSystemTckTest + typeConformance.generated.* (166/166, TCK diffs exactly
-  // at the pinned Deferred baseline) — a product-fix candidate for the guard's
-  // spelling-growth role, pending profiling of designatorSingletonType at mint.
-  private def canonOn: Boolean = System.getProperty("scala.asf.canonicalize") != null
+  // Without this, resolution recirculates fresh spellings as new substitutor
+  // targets and paths compound (`analyzer.global.analyzer.global…`) until
+  // hasRecursiveThisType cuts them off — see testScratchInferencerTrace, which
+  // sets scala.asf.nocanon to demonstrate the un-canonicalized behaviour.
+  // Verified green across the SCL-21947 oracle (OverrideHighlightingTest +
+  // TypeSystemTckTest + typeConformance.generated.* + TypeInferenceBugs5Test +
+  // Singleton*ConformanceTest); TCK diffs exactly at the pinned Deferred baseline.
+  // NOTE: only the guard's SPELLING-growth role is subsumed; its termination role
+  // (self-embedding: even canonical `Global.this.analyzer.type` contains
+  // `Global.this`) still needs the guard — see testScratchInferencerCanonNoGuard.
+  private def canonOn: Boolean = System.getProperty("scala.asf.nocanon") == null
   def noGuard: Boolean = System.getProperty("scala.asf.noguard") != null
   private val inCanon: ThreadLocal[Boolean] = ThreadLocal.withInitial[Boolean](() => false)
 

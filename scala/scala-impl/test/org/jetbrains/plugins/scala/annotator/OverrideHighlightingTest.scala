@@ -221,6 +221,8 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   def testScratchInferencerTrace(): Unit = {
     System.setProperty("scala.asf.trace", "true")
     System.setProperty("scala.asf.origin", "analyzer\\.global") // one-shot stack at first doubled target
+    System.setProperty("scala.asf.nocanon", "true") // canonicalize-at-mint is ON by default; disable so this
+                                                    // test still demonstrates the un-canonicalized doubling
     try errorsFromScalaCode(
       """
         |trait Typers { self: Analyzer =>
@@ -241,16 +243,16 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     finally {
       System.clearProperty("scala.asf.trace")
       System.clearProperty("scala.asf.origin")
+      System.clearProperty("scala.asf.nocanon")
     }
   }
 
-  // PROBE 3: same fixture, but singleton val-path targets are collapsed to their
-  // canonical spelling at the ScSubstitutor construction chokepoint
-  // (scala.asf.canonicalize). If the guard is really a feedback-loop breaker for
-  // non-canonical spellings, GUARD blocks and grown targets should disappear.
+  // Same fixture under the (now default-on) canonicalize-at-mint: singleton
+  // val-path spellings collapse where projections are re-minted, so no grown
+  // targets are ever constructed (doubling eliminated; deepest spelling equals
+  // scalac's one-hop answer). Traces the CANON collapses.
   def testScratchInferencerTraceCanon(): Unit = {
     System.setProperty("scala.asf.trace", "true")
-    System.setProperty("scala.asf.canonicalize", "true")
     try {
       val errors = errorsFromScalaCode(
         """
@@ -272,7 +274,6 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
       System.err.println(s"CANON-ERRORS -> ${errors.map(_.toString)}")
     } finally {
       System.clearProperty("scala.asf.trace")
-      System.clearProperty("scala.asf.canonicalize")
     }
   }
 
@@ -287,8 +288,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // climb) and structurally cannot self-embed. The test records the outcome
   // instead of failing the suite.
   def testScratchInferencerCanonNoGuard(): Unit = {
-    System.setProperty("scala.asf.canonicalize", "true")
-    System.setProperty("scala.asf.noguard", "true")
+    System.setProperty("scala.asf.noguard", "true") // canonicalize-at-mint is default-on
     try {
       val errors = errorsFromScalaCode(
         """
@@ -312,7 +312,6 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
       case _: StackOverflowError =>
         System.err.println("CANON-NOGUARD -> StackOverflowError (guard's termination role NOT subsumed by canonicalization)")
     } finally {
-      System.clearProperty("scala.asf.canonicalize")
       System.clearProperty("scala.asf.noguard")
     }
   }
