@@ -19,28 +19,51 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
   }
 
   override protected val subst: PartialFunction[LeafType, ScType] = {
-    case th: ScThisType if !hasRecursiveThisType(target, th.element) => doUpdateThisTypeFromClass(th, target, seenFromClass)
+    case th: ScThisType if !hasRecursiveThisType(target, th.element) =>
+      ThisTypeSubstitution.enter(s"thisTypeAsSeen($th)  [pre=$target, seenFromClass=${ThisTypeSubstitution.nameOf(seenFromClass)}]")
+      val res = doUpdateThisTypeFromClass(th, target, seenFromClass)
+      ThisTypeSubstitution.leave(res)
+      res
   }
 
   @tailrec
   private def doUpdateThisType(thisTp: ScThisType, target: ScType): ScType =
-    if (isMoreNarrow(target, thisTp, Set.empty)) target
+    if (isMoreNarrow(target, thisTp, Set.empty)) {
+      ThisTypeSubstitution.line(s"isMoreNarrow(pre=$target, $thisTp) = true  -> $target")
+      target
+    }
     else {
       containingClassType(target) match {
-        case Some(targetContext) => doUpdateThisType(thisTp, targetContext)
-        case _                   => thisTp
+        case Some(targetContext) =>
+          ThisTypeSubstitution.line(s"isMoreNarrow(pre=$target, $thisTp) = false  -> climb enclosing to $targetContext")
+          doUpdateThisType(thisTp, targetContext)
+        case _                   =>
+          ThisTypeSubstitution.line(s"isMoreNarrow(pre=$target, $thisTp) = false, no enclosing  -> keep $thisTp")
+          thisTp
       }
     }
 
   private def doUpdateThisTypeFromClass(thisTp: ScThisType, target: ScType, @Nullable clazz: PsiClass): ScType =
-    if (clazz == null || clazz == thisTp.element || clazz.containingClass == null)
+    if (clazz == null || clazz == thisTp.element || clazz.containingClass == null) {
+      ThisTypeSubstitution.line(s"baseWalk: clazz=${ThisTypeSubstitution.nameOf(clazz)} terminal  -> narrow against pre=$target")
       doUpdateThisType(thisTp, target)
+    }
     else {
       // Use the merged `baseType` (scalac's `pre baseType clazz`) rather than the
       // first iterator hit, so multiple/merged same-class contributions resolve to
       // one deterministic base type and we take its prefix — cf. AsSeenFromMap.thisTypeAsSeen.
-      BaseTypes.baseType(target, clazz).flatMap(containingClassType) match {
-        case Some(targetContext) => doUpdateThisTypeFromClass(thisTp, targetContext, clazz.containingClass)
+      //
+      // THE KEY DIVERGENCE: in scalac `pre baseType clazz` is a cached BaseTypeSeq
+      // array lookup — inert data, no re-entry. Here it is a LIVE recompute that
+      // itself invokes asSeenFrom, so any `thisTypeAsSeen(...)` firings printed
+      // *indented under* this `baseType(...)` header are the re-entry that grows `pre`.
+      ThisTypeSubstitution.enter(s"baseType(pre=$target, ${clazz.name})  [scalac: cached BaseTypeSeq lookup, no re-entry | IntelliJ: live recompute, re-enters asSeenFrom ↓]")
+      val bt = BaseTypes.baseType(target, clazz)
+      ThisTypeSubstitution.leave(bt)
+      bt.flatMap(containingClassType) match {
+        case Some(targetContext) =>
+          ThisTypeSubstitution.line(s"(pre baseType ${clazz.name}).prefix = $targetContext  -> climb owner to ${ThisTypeSubstitution.nameOf(clazz.containingClass)}")
+          doUpdateThisTypeFromClass(thisTp, targetContext, clazz.containingClass)
         // `clazz` is not a base type of `target` — e.g. `clazz` is an INNER CLASS reached
         // via a prefixed projection base (`global.AstTransformer`), so an inherited member's
         // ENCLOSING-universe this-type (`SymbolTable.this`/`ApiUniverse.this`, surfacing as
@@ -48,11 +71,19 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
         // walking until the prefix is empty rather than bailing on `pre baseType clazz`; mirror
         // that by narrowing against `target` (guarded by `isMoreNarrow`, so unrelated this-types
         // stay put). SCL-21947, the OuterPathTransformer `currentClass` shape.
-        case _                   => doUpdateThisType(thisTp, target)
+        case _                   =>
+          ThisTypeSubstitution.line(s"${clazz.name} not a base of pre=$target  -> narrow against pre")
+          doUpdateThisType(thisTp, target)
       }
     }
 
-  private def hasRecursiveThisType(tp: ScType, clazz: ScTemplateDefinition): Boolean =
+  private def hasRecursiveThisType(tp: ScType, clazz: ScTemplateDefinition): Boolean = {
+    val res = hasRecursiveThisType0(tp, clazz)
+    ThisTypeSubstitution.traceGuard(tp, clazz, res)
+    res
+  }
+
+  private def hasRecursiveThisType0(tp: ScType, clazz: ScTemplateDefinition): Boolean =
     tp.subtypeExists {
       // Genuine recursion: the target already mentions `clazz`'s own this-type.
       // Substituting would nest the target inside itself, so always guard this.
@@ -185,4 +216,53 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
 
     rec(tp, Set.empty).fold(Some(_), Some(_))
   }
+}
+
+/**
+ * asSeenFrom tracing, the IntelliJ analog of scalac's `LoggingAsSeenFromMap`
+ * (`test/junit/scala/reflect/internal/AsSeenFromTest.scala` in scala/scala).
+ *
+ * Enable from a test body with `System.setProperty("scala.asf.trace", "true")`
+ * BEFORE triggering type computation. (Passing `-Dscala.asf.trace` on the sbt
+ * command line does NOT work — it isn't forwarded to the forked test JVM; the
+ * property must be set from inside the same JVM, cf. SCL-21947 handoff notes.)
+ *
+ * Output mirrors scalac's indented style: each `thisTypeAsSeen(...)` firing (a
+ * `ScThisType` leaf re-anchored onto the prefix `pre` = `target`) opens an indent
+ * level; the internal owner-chain walk prints its `(pre baseType clazz).prefix`
+ * climbs and `isMoreNarrow` narrowing decisions one level in — the counterpart of
+ * scalac's `matchesPrefixAndClass` steps — and `leave` closes with `= <result>`.
+ * `hasRecursiveThisType` decisions (no analog in scalac's `thisTypeAsSeen`) print
+ * as `GUARD` lines. Unlike scalac, which walks the finite owner chain once and
+ * returns, IntelliJ feeds the substitution output back through the generic
+ * `recursiveUpdate` engine, so successive top-level firings show `pre` regrowing
+ * (`…analyzer.global.analyzer.global…`) with `GUARD` cutting the regrowth off.
+ */
+private object ThisTypeSubstitution {
+  private def on: Boolean = System.getProperty("scala.asf.trace") != null
+
+  private val indentTL: ThreadLocal[Int] = ThreadLocal.withInitial[Int](() => 0)
+  private def pad: String = "  " * indentTL.get
+
+  def nameOf(@Nullable c: PsiClass): String = Option(c).map(_.name).getOrElse("<null>")
+
+  /** Print `msg` at the current indent, then descend one level. */
+  def enter(msg: => String): Unit = if (on) {
+    System.err.println(s"$pad$msg")
+    indentTL.set(indentTL.get + 1)
+  }
+
+  /** Ascend one level, then print `= result` at that indent (matches scalac). */
+  def leave(result: Any): Unit = if (on) {
+    indentTL.set(math.max(0, indentTL.get - 1))
+    System.err.println(s"$pad= $result")
+  }
+
+  /** A single step at the current indent (owner-chain climb / narrowing decision). */
+  def line(msg: => String): Unit = if (on) System.err.println(s"$pad$msg")
+
+  /** The guard that scalac has no analog for — print both outcomes, flag blocks. */
+  def traceGuard(target: ScType, clazz: ScTemplateDefinition, guarded: Boolean): Unit =
+    if (on) System.err.println(
+      s"${pad}GUARD hasRecursiveThisType(${clazz.name}.this, pre=$target) = $guarded${if (guarded) "  -> BLOCK" else ""}")
 }

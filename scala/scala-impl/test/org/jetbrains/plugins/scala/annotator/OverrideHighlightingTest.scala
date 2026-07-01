@@ -140,6 +140,106 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     assertNothing(errorsFromScalaCode(code))
   }
 
+  // asSeenFrom trace of the Inferencer shape — the IntelliJ counterpart of
+  // scala/scala's `AsSeenFromTest.inferencer` LoggingAsSeenFromMap. Sets
+  // `scala.asf.trace` so `ThisTypeSubstitution` prints its firings (`ASF fire`)
+  // and `hasRecursiveThisType` blocks (`ASF GUARD`) to stderr.
+  //
+  // === What both engines compute ===
+  //
+  // The parameter type of `applyTypeToWildcards` (declared `Typers.this.global.Type`)
+  // as seen through the receiver `typer`, reached via the abstract `val global`, i.e.
+  // asSeenFrom prefix `Analyzer.this.global.typer.type`, class `Typer`.
+  //
+  // === scalac (AsSeenFromMap.thisTypeAsSeen) — one pass, owner-chain walk, stops ===
+  //
+  //   apply((tp): Typers.this.global.Type : MethodType)
+  //     apply(Typers.this.global.Type : AbstractNoArgsTypeRef)
+  //       apply(Typers.this.global.type : UniqueSingleType)
+  //         apply(Typers.this.type : UniqueThisType)
+  //           thisTypeAsSeen(Typers.this.type)
+  //             matchesPrefixAndClass(pre=…global.typer.type, class=Typer)(candidate=Typers) = false
+  //             matchesPrefixAndClass(pre=…global.analyzer.type, class=Typers)(candidate=Typers) = true
+  //           = Analyzer.this.global.analyzer.type
+  //         = Analyzer.this.global.analyzer.type
+  //       = Analyzer.this.global.analyzer.global.type
+  //     = Analyzer.this.global.analyzer.global.Type
+  //   = (tp: Analyzer.this.global.analyzer.global.Type): Analyzer.this.global.analyzer.global.Type
+  //   RESULT param type = Analyzer.this.global.analyzer.global.Type   // ONE analyzer.global. Done.
+  //
+  // `thisTypeAsSeen`'s loop climbs the symbol OWNER chain (`clazz -> clazz.owner`),
+  // taking `(pre baseType clazz).prefix` at each step, and returns the moment
+  // `matchesPrefixAndClass` succeeds. It never re-applies itself to its own output —
+  // the recursion is over a finite, acyclic owner chain, so there is nothing to guard.
+  //
+  // === IntelliJ (ThisTypeSubstitution over the generic recursiveUpdate engine) ===
+  //
+  // Same indented idiom (thisTypeAsSeen opens a level; the owner-chain climb and the
+  // isMoreNarrow narrowing decisions nest one deeper; `= result` closes; GUARD is the
+  // brake that has no scalac analog). A clean firing mirrors scalac's owner walk:
+  //
+  //   thisTypeAsSeen(Typers.this.type)  [pre=…global.typer.type, seenFromClass=Typer]
+  //     (pre baseType Typer).prefix = …global.analyzer.type  -> climb owner to Typers
+  //     baseWalk: clazz=Typers terminal  -> narrow against pre=…global.analyzer.type
+  //     isMoreNarrow(pre=…global.analyzer.type, Typers.this.type) = true  -> …global.analyzer.type
+  //   = …global.analyzer.type
+  //
+  // The regrowth's true source is NOT the leaf/recursiveUpdate reassembly (swapping
+  // ThisTypeSubstitution to a non-leaf SimpleUpdate changes nothing — measured). It is
+  // that the owner-chain step `(pre baseType clazz)` is a LIVE recompute here, and
+  // `BaseTypes.baseType` itself invokes asSeenFrom. The `baseType(...)` trace bracket
+  // makes it patent — the nested firings are inside the base-type computation, and `pre`
+  // is already growing there:
+  //
+  //   thisTypeAsSeen(Typers.this.type)  [pre=…global.typer.type, seenFromClass=Typer]
+  //     baseType(pre=…global.typer.type, Typer)  [scalac: cached BaseTypeSeq lookup, no re-entry | IntelliJ: live recompute, re-enters asSeenFrom ↓]
+  //       thisTypeAsSeen(Global.this.type)  [pre=…global.type, seenFromClass=Global]        ← RE-ENTRY
+  //         ...
+  //       thisTypeAsSeen(Global.this.type)  [pre=…global.analyzer.type]                     ← pre already grew
+  //         ...
+  //     = Some(…global.analyzer.Typer)                                                      ← baseType result
+  //     (pre baseType Typer).prefix = …global.analyzer.type  -> climb owner to Typers
+  //   = …global.analyzer.type
+  //
+  // Across the whole computation `pre` runs `analyzer.type` -> `analyzer.global.analyzer.type`
+  // -> `analyzer.global.analyzer.global.analyzer.global.type` — the doubling the SCL-21947
+  // fix commit describes — with GUARD (`hasRecursiveThisType = true -> BLOCK`) the only
+  // thing halting it.
+  //
+  // === Why the guard exists here but not in scalac ===
+  //
+  // scalac's `thisTypeAsSeen` climbs the same owner chain, but its `(pre baseType clazz)` is
+  // a CACHED `BaseTypeSeq` array lookup — inert data, it never re-enters the map. So the walk
+  // is over a finite owner chain and returns once `matchesPrefixAndClass` succeeds; there is
+  // nothing to guard. IntelliJ's `BaseTypes.baseType` is an UNCACHED recompute that re-invokes
+  // asSeenFrom, so each level re-anchors a `this` inside a `pre` that already embeds `…analyzer`,
+  // accreting another `analyzer.global`. `hasRecursiveThisType` (the `GUARD` lines) is the
+  // emergency brake over that re-entry; remove it and this exact shape StackOverflows. The
+  // principled fix that would retire it is a cached, closed-form `baseType` feeding the
+  // owner-chain walk (à la scalac's `(pre baseType clazz).prefix` over a cached seq), so the
+  // step is inert data and the walk cannot re-enter asSeenFrom.
+  def testScratchInferencerTrace(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    try errorsFromScalaCode(
+      """
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
+        |}
+        |trait Infer { self: Analyzer =>
+        |  import global._
+        |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
+        |}
+        |trait Analyzer extends Typers with Infer { val global: Global }
+        |class Global {
+        |  type Type
+        |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+        |  object typer extends analyzer.Typer
+        |}
+      """.stripMargin)
+    finally System.clearProperty("scala.asf.trace")
+  }
+
   // SCL-21947, fourth shape: the singleton val-path `gen.global` (refined to
   // `Global.this.type`) again fails to collapse to `global`, but this time the
   // conformance crosses inheritance: `gen.global.Block <: Tree` (= `global.Tree`)
