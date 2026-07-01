@@ -115,7 +115,14 @@ private abstract class SubtypeUpdater(needVariance: Boolean, needUpdate: Boolean
     val updatedType = substitutor.recursiveUpdateImpl(projected, Covariant)
 
     if (!needUpdate || (updatedType eq projected)) pt
-    else ScProjectionType(updatedType, pt.element)
+    else {
+      // PROBE 3b (scala.asf.canonicalize): THE MINT POINT of non-canonical path
+      // spellings — rebuilding a projection over a freshly-substituted prefix is
+      // where `…analyzer.global` gets spelled for `…global` (cf. the ORIGIN stack
+      // in testScratchInferencerTrace). Collapse the new spelling right here so
+      // downstream resolution never recirculates it as a substitutor target.
+      ThisTypeSubstitution.canonicalizeTarget(ScProjectionType(updatedType, pt.element))
+    }
   }
 
   private def updateMethodType(mt: ScMethodType,

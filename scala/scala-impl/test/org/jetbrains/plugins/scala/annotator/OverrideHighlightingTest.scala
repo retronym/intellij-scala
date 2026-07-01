@@ -220,6 +220,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // step is inert data and the walk cannot re-enter asSeenFrom.
   def testScratchInferencerTrace(): Unit = {
     System.setProperty("scala.asf.trace", "true")
+    System.setProperty("scala.asf.origin", "analyzer\\.global") // one-shot stack at first doubled target
     try errorsFromScalaCode(
       """
         |trait Typers { self: Analyzer =>
@@ -237,7 +238,83 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
         |  object typer extends analyzer.Typer
         |}
       """.stripMargin)
-    finally System.clearProperty("scala.asf.trace")
+    finally {
+      System.clearProperty("scala.asf.trace")
+      System.clearProperty("scala.asf.origin")
+    }
+  }
+
+  // PROBE 3: same fixture, but singleton val-path targets are collapsed to their
+  // canonical spelling at the ScSubstitutor construction chokepoint
+  // (scala.asf.canonicalize). If the guard is really a feedback-loop breaker for
+  // non-canonical spellings, GUARD blocks and grown targets should disappear.
+  def testScratchInferencerTraceCanon(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    System.setProperty("scala.asf.canonicalize", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |trait Typers { self: Analyzer =>
+          |  import global._
+          |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
+          |}
+          |trait Infer { self: Analyzer =>
+          |  import global._
+          |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
+          |}
+          |trait Analyzer extends Typers with Infer { val global: Global }
+          |class Global {
+          |  type Type
+          |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+          |  object typer extends analyzer.Typer
+          |}
+        """.stripMargin)
+      System.err.println(s"CANON-ERRORS -> ${errors.map(_.toString)}")
+    } finally {
+      System.clearProperty("scala.asf.trace")
+      System.clearProperty("scala.asf.canonicalize")
+    }
+  }
+
+  // PROBE 3c RESULT: canonicalize ON + hasRecursiveThisType OFF still
+  // StackOverflows (pure updateProjectionType/recursiveUpdateImpl descent of an
+  // unboundedly deep type). So mint-point canonicalization subsumes only the
+  // guard's SPELLING-growth role, not its TERMINATION role: even the canonical
+  // spelling `Global.this.analyzer.type` contains `Global.this`, and with arm-1
+  // off, rewriting `Global.this` leaves inside it self-embeds the target — the
+  // 1-arg/null-seenFromClass isMoreNarrow walk returns the WHOLE target, whereas
+  // scalac's lockstep (pre, clazz) walk only ever STRIPS prefixes (`.prefix` per
+  // climb) and structurally cannot self-embed. The test records the outcome
+  // instead of failing the suite.
+  def testScratchInferencerCanonNoGuard(): Unit = {
+    System.setProperty("scala.asf.canonicalize", "true")
+    System.setProperty("scala.asf.noguard", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |trait Typers { self: Analyzer =>
+          |  import global._
+          |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
+          |}
+          |trait Infer { self: Analyzer =>
+          |  import global._
+          |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
+          |}
+          |trait Analyzer extends Typers with Infer { val global: Global }
+          |class Global {
+          |  type Type
+          |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+          |  object typer extends analyzer.Typer
+          |}
+        """.stripMargin)
+      System.err.println(s"CANON-NOGUARD-ERRORS -> ${errors.map(_.toString)}")
+    } catch {
+      case _: StackOverflowError =>
+        System.err.println("CANON-NOGUARD -> StackOverflowError (guard's termination role NOT subsumed by canonicalization)")
+    } finally {
+      System.clearProperty("scala.asf.canonicalize")
+      System.clearProperty("scala.asf.noguard")
+    }
   }
 
   // SCL-21947, fourth shape: the singleton val-path `gen.global` (refined to
