@@ -20,7 +20,7 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
 
   override protected val subst: PartialFunction[LeafType, ScType] = {
     case th: ScThisType if !hasRecursiveThisType(target, th.element) =>
-      ThisTypeSubstitution.enter(s"thisTypeAsSeen($th)  [pre=$target, seenFromClass=${ThisTypeSubstitution.nameOf(seenFromClass)}]")
+      ThisTypeSubstitution.enter(s"thisTypeAsSeen($th)#${ThisTypeSubstitution.idOf(this)}  [pre=$target, seenFromClass=${ThisTypeSubstitution.nameOf(seenFromClass)}]")
       val res = doUpdateThisTypeFromClass(th, target, seenFromClass)
       ThisTypeSubstitution.leave(res)
       res
@@ -79,7 +79,7 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
 
   private def hasRecursiveThisType(tp: ScType, clazz: ScTemplateDefinition): Boolean = {
     val res = hasRecursiveThisType0(tp, clazz)
-    ThisTypeSubstitution.traceGuard(tp, clazz, res)
+    ThisTypeSubstitution.traceGuard(this, tp, clazz, res)
     res
   }
 
@@ -246,6 +246,35 @@ private object ThisTypeSubstitution {
 
   def nameOf(@Nullable c: PsiClass): String = Option(c).map(_.name).getOrElse("<null>")
 
+  def idOf(x: AnyRef): String = Integer.toHexString(System.identityHashCode(x))
+
+  /** Log the CONSTRUCTION of a ThisTypeSubstitution: instance id, params, and the
+   *  (filtered) call site — so firings with grown targets can be traced back to
+   *  whoever built a substitutor out of a previously-substituted type. */
+  def traceNew(inst: ThisTypeSubstitution): ThisTypeSubstitution = {
+    if (on) {
+      val site = Thread.currentThread.getStackTrace.iterator
+        .drop(1)
+        .filter { e =>
+          val cn = e.getClassName
+          !cn.startsWith("java.") && !cn.startsWith("jdk.") && !cn.startsWith("scala.") &&
+            !cn.contains("recursiveUpdate")
+        }
+        .take(3)
+        .map(e => s"${e.getClassName.substring(e.getClassName.lastIndexOf('.') + 1)}.${e.getMethodName}:${e.getLineNumber}")
+        .mkString("  <  ")
+      System.err.println(s"${pad}NEW #${idOf(inst)}  target=${inst.target}  seenFromClass=${nameOf(inst.seenFromClass)}\n$pad     at $site")
+    }
+    inst
+  }
+
+  /** A this-substitution's REWRITTEN output being handed to further fused updates in
+   *  the same chain (cf. the leaf-only warning at ScSubstitutor.recursiveUpdateImpl):
+   *  later this-substitutions may rewrite this-types INSIDE this output — path
+   *  concatenation within a single pass. */
+  def traceChainFeed(s: ThisTypeSubstitution, from: ScType, to: ScType, remaining: Int): Unit =
+    if (on) System.err.println(s"${pad}CHAIN-FEED #${idOf(s)}  ($from -> $to) fed to $remaining more fused update(s)")
+
   /** Print `msg` at the current indent, then descend one level. */
   def enter(msg: => String): Unit = if (on) {
     System.err.println(s"$pad$msg")
@@ -262,7 +291,7 @@ private object ThisTypeSubstitution {
   def line(msg: => String): Unit = if (on) System.err.println(s"$pad$msg")
 
   /** The guard that scalac has no analog for — print both outcomes, flag blocks. */
-  def traceGuard(target: ScType, clazz: ScTemplateDefinition, guarded: Boolean): Unit =
+  def traceGuard(inst: AnyRef, target: ScType, clazz: ScTemplateDefinition, guarded: Boolean): Unit =
     if (on) System.err.println(
-      s"${pad}GUARD hasRecursiveThisType(${clazz.name}.this, pre=$target) = $guarded${if (guarded) "  -> BLOCK" else ""}")
+      s"${pad}GUARD#${idOf(inst)} hasRecursiveThisType(${clazz.name}.this, pre=$target) = $guarded${if (guarded) "  -> BLOCK" else ""}")
 }
