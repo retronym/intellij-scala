@@ -78,7 +78,10 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
     }
 
   private def hasRecursiveThisType(tp: ScType, clazz: ScTemplateDefinition): Boolean = {
-    val res = hasRecursiveThisType0(tp, clazz)
+    // PROBE: -Dscala.asf.noguard disables the guard entirely — combined with
+    // scala.asf.canonicalize this tests whether mint-point canonicalization
+    // subsumes the guard (without it, this fixture StackOverflows).
+    val res = !ThisTypeSubstitution.noGuard && hasRecursiveThisType0(tp, clazz)
     ThisTypeSubstitution.traceGuard(this, tp, clazz, res)
     res
   }
@@ -248,10 +251,105 @@ private object ThisTypeSubstitution {
 
   def idOf(x: AnyRef): String = Integer.toHexString(System.identityHashCode(x))
 
+  // ── PROBE 3: canonicalize-at-construction (scala.asf.canonicalize) ────────────
+  // Thesis: the guard is a feedback-loop breaker for non-canonical path spellings
+  // (`…analyzer.global` for `…global`) being fed back in as substitutor targets.
+  // If targets are collapsed to canonical spelling AT THE CHOKEPOINT, the loop
+  // should never close and the guard should stop firing. Mirrors the (private)
+  // ScalaConformance collapse: own designatorSingletonType, then the compound
+  // prefix's refinement (`new { val global: Global.this.type } with Analyzer`).
+  // NOTE: verified green when forced on across OverrideHighlightingTest +
+  // TypeSystemTckTest + typeConformance.generated.* (166/166, TCK diffs exactly
+  // at the pinned Deferred baseline) — a product-fix candidate for the guard's
+  // spelling-growth role, pending profiling of designatorSingletonType at mint.
+  private def canonOn: Boolean = System.getProperty("scala.asf.canonicalize") != null
+  def noGuard: Boolean = System.getProperty("scala.asf.noguard") != null
+  private val inCanon: ThreadLocal[Boolean] = ThreadLocal.withInitial[Boolean](() => false)
+
+  private def isSingletonLike(t: ScType): Boolean = t match {
+    case _: ScThisType      => true
+    case d: DesignatorOwner => d.isSingleton
+    case _                  => false
+  }
+
+  // NOTE: written lambda-free (explicit matches/loop) — the incremental jar
+  // packager misses freshly-introduced nested anonfun classes.
+  private def projSingleton(proj: ScProjectionType): Option[ScType] = {
+    val own = proj.designatorSingletonType match {
+      case s @ Some(t) if isSingletonLike(t) => s
+      case _                                 => None
+    }
+    if (own.isDefined) own
+    else proj.projected match {
+      case pp: ScProjectionType =>
+        pp.designatorSingletonType match {
+          case Some(ct: ScCompoundType) => refinedSingleton(ct, proj)
+          case _                        => None
+        }
+      case _ => None
+    }
+  }
+
+  private def refinedSingleton(ct: ScCompoundType, proj: ScProjectionType): Option[ScType] = {
+    val it = ct.signatureMap.iterator
+    while (it.hasNext) {
+      val (sig, tpe) = it.next()
+      if (sig.name == proj.element.name) {
+        val substed = proj.actualSubst(tpe)
+        if (isSingletonLike(substed)) return Some(substed)
+      }
+    }
+    None
+  }
+
+  def canonicalizeTarget(tp: ScType): ScType =
+    if (!canonOn || inCanon.get) tp
+    else {
+      inCanon.set(true)
+      try {
+        @annotation.tailrec
+        def collapse(t: ScType, fuel: Int): ScType = t match {
+          case proj: ScProjectionType if fuel > 0 =>
+            val stable = proj.element match {
+              case d: ScTypedDefinition => d.isStable
+              case _                    => false
+            }
+            if (!stable) t
+            else projSingleton(proj) match {
+              case Some(s) if s ne proj => collapse(s, fuel - 1)
+              case _                    => t
+            }
+          case _ => t
+        }
+        val res = collapse(tp, 8)
+        if ((res ne tp) && on)
+          System.err.println(s"${pad}CANON  $tp  ==>  $res")
+        res
+      } finally inCanon.set(false)
+    }
+
+  // ORIGIN HUNT: one-shot full-stack dump at the FIRST construction whose target
+  // matches -Dscala.asf.origin=<regex> (e.g. "analyzer\\.global") — names the code
+  // path that first fed a non-canonical (uncollapsed) path back in as a target.
+  @volatile private var originDumped = false
+  private def originHunt(inst: ThisTypeSubstitution): Unit = {
+    val re = System.getProperty("scala.asf.origin")
+    if (re != null && !originDumped && re.r.findFirstIn(inst.target.toString).isDefined) {
+      originDumped = true
+      val stack = Thread.currentThread.getStackTrace.iterator
+        .drop(1)
+        .filter(e => e.getClassName.startsWith("org.jetbrains"))
+        .map(e => s"  ${e.getClassName.substring(e.getClassName.lastIndexOf('.') + 1)}.${e.getMethodName}:${e.getLineNumber}")
+        .mkString("\n")
+      System.err.println(s"ORIGIN #${idOf(inst)}  first target matching /$re/: ${inst.target}\n$stack")
+    }
+  }
+
   /** Log the CONSTRUCTION of a ThisTypeSubstitution: instance id, params, and the
    *  (filtered) call site — so firings with grown targets can be traced back to
    *  whoever built a substitutor out of a previously-substituted type. */
   def traceNew(inst: ThisTypeSubstitution): ThisTypeSubstitution = {
+    originHunt(inst)
     if (on) {
       val site = Thread.currentThread.getStackTrace.iterator
         .drop(1)

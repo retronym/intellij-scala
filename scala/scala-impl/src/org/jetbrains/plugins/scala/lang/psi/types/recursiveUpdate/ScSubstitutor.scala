@@ -206,10 +206,10 @@ object ScSubstitutor {
   }
 
   def apply(updateThisType: ScType): ScSubstitutor =
-    ScSubstitutor(ThisTypeSubstitution.traceNew(ThisTypeSubstitution(updateThisType, null)))
+    ScSubstitutor(ThisTypeSubstitution.traceNew(ThisTypeSubstitution(ThisTypeSubstitution.canonicalizeTarget(updateThisType), null)))
 
   def apply(updateThisType: ScType, seenFromClass: PsiClass): ScSubstitutor =
-    ScSubstitutor(ThisTypeSubstitution.traceNew(ThisTypeSubstitution(updateThisType, seenFromClass)))
+    ScSubstitutor(ThisTypeSubstitution.traceNew(ThisTypeSubstitution(ThisTypeSubstitution.canonicalizeTarget(updateThisType), seenFromClass)))
 
   def paramToExprType(parameters: Seq[Parameter], expressions: Seq[Expression], useExpected: Boolean = true): ScSubstitutor =
     ScSubstitutor(ParamsToExprs(parameters, expressions, useExpected))
