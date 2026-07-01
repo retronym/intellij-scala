@@ -116,11 +116,12 @@ private abstract class SubtypeUpdater(needVariance: Boolean, needUpdate: Boolean
 
     if (!needUpdate || (updatedType eq projected)) pt
     else {
-      // PROBE 3b (scala.asf.canonicalize): THE MINT POINT of non-canonical path
-      // spellings — rebuilding a projection over a freshly-substituted prefix is
-      // where `…analyzer.global` gets spelled for `…global` (cf. the ORIGIN stack
-      // in testScratchInferencerTrace). Collapse the new spelling right here so
-      // downstream resolution never recirculates it as a substitutor target.
+      // Canonicalize-at-mint (default ON, -Dscala.asf.nocanon to disable): THE MINT
+      // POINT of non-canonical path spellings — rebuilding a projection over a
+      // freshly-substituted prefix is where `…analyzer.global` gets spelled for
+      // `…global` (cf. the ORIGIN stack in testScratchInferencerTrace). Collapse
+      // the new spelling right here so downstream resolution never recirculates it
+      // as a substitutor target.
       ThisTypeSubstitution.canonicalizeTarget(ScProjectionType(updatedType, pt.element))
     }
   }
