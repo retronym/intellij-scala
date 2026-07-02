@@ -292,6 +292,84 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // structural guard is replaced by a pure depth cap (scala.asf.maxdepth) so the
   // self-embedding rounds can be WATCHED in the trace instead of blocked at first
   // contact. StackOverflow is caught and recorded in case the cap is insufficient.
+  //
+  // ═══ IntelliJ, one growth round (this test's trace; nesting depth ≈ 2 of 10) ═══
+  //
+  //   NEW #1d91d21d  target=Infer.this.global.analyzer.global.analyzer.type  seenFromClass=<null>
+  //        at BaseProcessor.processTypeImpl:315 < ...       ◄── round N's input: a 2× spelling, recirculated
+  //                                                         ◄── as a fresh 1-arg substitutor target by resolution
+  //   GUARD#1d91d21d hasRecursiveThisType(Global.this, pre=…2×…) = false
+  //   thisTypeAsSeen(Global.this.type)#1d91d21d  [pre=…analyzer.global.analyzer.type]
+  //     isMoreNarrow(…2×…, Global.this.type) = false  -> climb enclosing to …analyzer.global.type
+  //     isMoreNarrow(…analyzer.global.type, Global.this.type) = true
+  //   = Infer.this.global.analyzer.global.type              ◄── the Global.this rewrite is BENIGN: the climb
+  //                                                         ◄── strips the trailing .analyzer — walk working
+  //   GUARD#1d91d21d hasRecursiveThisType(Infer.this, pre=…2×…) = false
+  //                                                         ◄── ★ THE ADMISSION. In production arm-1 answers
+  //                                                         ◄── TRUE: target is ROOTED at Infer.this and we
+  //                                                         ◄── are about to rewrite Infer.this.
+  //   thisTypeAsSeen(Infer.this.type)#1d91d21d  [pre=…analyzer.global.analyzer.type]
+  //     isMoreNarrow(…2×…, Infer.this.type) = true  -> …2×…
+  //                                                         ◄── ★ THE SELF-EMBEDDING REWRITE: the path's class
+  //                                                         ◄── (Analyzer) extends Infer, so the WHOLE target
+  //                                                         ◄── stands in for Infer.this — defensible by
+  //                                                         ◄── subtyping, poison by structure: the target now
+  //                                                         ◄── contains itself where its root was.
+  //   = Infer.this.global.analyzer.global.analyzer.type
+  //   NEW #78d1c3e8  target=Infer.this.global.analyzer.global.analyzer.global.type
+  //        at BaseProcessor.processTypeImpl:315 < ...       ◄── ★ THE +1: resolution projects .global onto the
+  //                                                         ◄── poisoned path and recirculates it as round
+  //                                                         ◄── N+1's target: 2× -> 3×. Minted by resolution-
+  //                                                         ◄── side ScProjectionType construction, NOT by
+  //                                                         ◄── updateProjectionType — the canonicalize-at-mint
+  //                                                         ◄── hook never sees it (4 CANON collapses in the
+  //                                                         ◄── whole run, all at 1×). 60+ segments later:
+  //                                                         ◄── StackOverflowError, from mere descent.
+  //   Depth never nears the cap of 10 — growth is SEQUENTIAL recirculation (round N's
+  //   output -> round N+1's input through fresh top-level substitutors), not nesting.
+  //   No depth limit can bound it; arm-1 keys on the PRECONDITION (target rooted at the
+  //   this-type being rewritten), which is why it is irreplaceable by depth or spelling
+  //   heuristics.
+  //
+  // ═══ scalac, the same example (scala/scala AsSeenFromTest.remnantFixpoint) ═══
+  //
+  //   ===== ROUND 1: pre = Analyzer.this.global.type =====
+  //   select .analyzer -> Analyzer.this.global.analyzer.type
+  //   member 'global' info = Analyzer.this.global.type      ◄── the refinement decl was re-anchored ONCE, to
+  //                                                         ◄── the selection prefix, by the cached copied-
+  //                                                         ◄── refinement widen — memberType, materialized
+  //   apply(Analyzer.this.global.type : NullaryMethodType)
+  //     apply(Analyzer.this.global.type : UniqueSingleType)
+  //       apply(Analyzer.this.type : UniqueThisType)
+  //         thisTypeAsSeen(Analyzer.this.type)
+  //           matchesPrefixAndClass(...)(candidate=trait Analyzer) = false
+  //         = Analyzer.this.type                            ◄── nothing to do; info already canonical
+  //   underlying(pre.analyzer.global) = Analyzer.this.global.type   ◄── == pre. NET GROWTH: 0
+  //   ===== ROUND 2: pre = Analyzer.this.global.type =====  ◄── FIXPOINT — byte-identical to round 1
+  //   ===== ROUND 3: pre = Analyzer.this.global.type =====  ◄── and again
+  //
+  //   POISON STEP: Infer.this asSeenFrom (pre=Analyzer.this.global.analyzer.type, clazz=Infer)
+  //   = Analyzer.this.global.analyzer.type                  ◄── scalac performs the IDENTICAL root-to-path
+  //                                                         ◄── rewrite — once. The divergence is entirely in
+  //                                                         ◄── what happens next: scalac consumes the result;
+  //                                                         ◄── IntelliJ recirculates it as a fresh target
+  //                                                         ◄── whose root gets rewritten AGAIN.
+  //   DEEP = Analyzer.this.global.(analyzer.global.)×3type  (built by hand)
+  //   underlying(deep.analyzer.global) = deep               ◄── ONE layer stripped — exactly what selection
+  //                                                         ◄── added. scalac does NOT eagerly collapse deep
+  //                                                         ◄── to P0; it merely never grows a spelling.
+  //
+  // ═══ The invariant separating the engines ═══
+  //
+  //   scalac:    underlying(pre.analyzer.global) == pre      for ANY pre  -> net 0/round -> fixpoint, no guard
+  //   IntelliJ:  next-target(pre.analyzer.global) == pre+1 layer          -> net +1/round -> guard or SOE
+  //
+  //   Round-trip NEUTRALITY, not canonicalization, is scalac's actual discipline: the
+  //   copied-refinement mechanism bakes the once-re-anchored member info into the cached
+  //   widened type, making `underlying` the exact inverse of selection. (Canonicalize-at-
+  //   mint is thus MORE aggressive than scalac — semantically sound, but the faithful
+  //   product-fix target is neutrality of designatorSingletonType: underlying(pre.member)
+  //   anchored at pre — a cheaper contract to enforce and cache.)
   def testScratchRemnantGrowthTrace(): Unit = {
     System.setProperty("scala.asf.trace", "true")
     System.setProperty("scala.asf.maxdepth", "10")
