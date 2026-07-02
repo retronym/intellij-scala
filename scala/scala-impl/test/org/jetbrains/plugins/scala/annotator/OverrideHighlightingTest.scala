@@ -1257,4 +1257,62 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
       Error("value", "Overriding type Int does not conform to base type String"),
     ): _*)
   }
+
+  // Step 0 of FUSED-SUBST-SCALAC.md: capture the chain SCL-7043 needs, under
+  // blanket terminal-output fusion (a rewriting this-substitution's output is
+  // not processed by the remainder of its own chain). testSCL7043 is the one
+  // suite counterexample to terminal-output curing the growth pump (591/592) —
+  // this trace records WHICH this-substitution rewrite gets skipped that the
+  // correct inferred type (Int, via the `T#Value` / Enumeration overload) needs.
+  def testScratchSCL7043Trace(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    System.setProperty("scala.asf.terminal", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |abstract class C[T] {
+          |  def lee : T
+          |}
+          |
+          |class CE[T <: Enumeration](val enum: T) extends C[T#Value] {
+          |  def foo(t: T#Value) = 1
+          |  def foo(s: String) = "text"
+          |
+          |  foo(enum.values.toList(0))
+          |  def lee = enum.values.toList(0)
+          |}
+        """.stripMargin)
+      System.err.println(s"SCL7043-ERRORS -> ${errors.map(_.toString)}")
+    } finally {
+      System.clearProperty("scala.asf.trace")
+      System.clearProperty("scala.asf.terminal")
+    }
+  }
+
+  // Same fixture, production behaviour (guard on, terminal off) — to compare
+  // against testScratchSCL7043Trace and see what the GUARD does with the
+  // `[update 1/2] Enumeration.this.type -> CE.this.enum.type` / `[update 2/2]
+  // target=CE.this.enum.type sfc=CE` chain that terminal-output breaks.
+  def testScratchSCL7043TraceProd(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |abstract class C[T] {
+          |  def lee : T
+          |}
+          |
+          |class CE[T <: Enumeration](val enum: T) extends C[T#Value] {
+          |  def foo(t: T#Value) = 1
+          |  def foo(s: String) = "text"
+          |
+          |  foo(enum.values.toList(0))
+          |  def lee = enum.values.toList(0)
+          |}
+        """.stripMargin)
+      System.err.println(s"SCL7043-PROD-ERRORS -> ${errors.map(_.toString)}")
+    } finally {
+      System.clearProperty("scala.asf.trace")
+    }
+  }
 }
