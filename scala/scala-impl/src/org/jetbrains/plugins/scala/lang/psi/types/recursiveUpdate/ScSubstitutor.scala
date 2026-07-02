@@ -58,6 +58,7 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
     if (cacheSubstitutions)
       cache ++= this.allTypeParamsMap
 
+    ThisTypeSubstitution.auditChain(substitutions, `type`)
     recursiveUpdateImpl(`type`)(SubtypeUpdaterNoVariance, Set.empty)
   }
 
@@ -76,13 +77,25 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
 
       currentUpdate(scType, variance) match {
         case ReplaceWith(res) =>
-          currentUpdate match {
+          val terminal = currentUpdate match {
             case tts: ThisTypeSubstitution if res ne scType =>
               // position [k/n]: n == 1 -> bare substitutor; k < n -> output fed to the rest of the fused chain
               ThisTypeSubstitution.traceRewrite(tts, scType, res, fromIndex + 1, substitutions.length)
-            case _ =>
+              // PROBE (-Dscala.asf.terminal): enforce the leaf-only fusion contract for
+              // THIS-substitutions — a rewritten this-leaf's output is not re-anchored
+              // by subsequent this-substitutions of the same chain (parallel-substitution
+              // semantics, cf. scalac SubstThisMap which substitutes and stops). Other
+              // update kinds (e.g. type-param instantiation) still apply inside the
+              // output: blanket-terminal under-substitutes (SCL-7043, T#Value overloads).
+              ThisTypeSubstitution.terminalOutput
+            case _ => false
           }
-          next.recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
+          if (terminal) {
+            val rest = restWithoutThisTypeSubstitutions
+            if (rest.isEmpty) res
+            else new ScSubstitutor(rest).recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
+          }
+          else next.recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
         case Stop => scType
         case ProcessSubtypes =>
           val newVisited = if (isLazySubtype) visited + scType else visited
@@ -96,6 +109,19 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
           }
       }
     }
+  }
+
+  // The remainder of the chain after fromIndex, with this-substitutions dropped —
+  // used by the terminal-output probe so non-this updates (type-param instantiation)
+  // still apply inside a rewritten this-leaf's output.
+  private def restWithoutThisTypeSubstitutions: Array[Update] = {
+    val b = Array.newBuilder[Update]
+    var i = fromIndex + 1
+    while (i < substitutions.length) {
+      if (!substitutions(i).isInstanceOf[ThisTypeSubstitution]) b += substitutions(i)
+      i += 1
+    }
+    b.result()
   }
 
   def followed(other: ScSubstitutor): ScSubstitutor = {

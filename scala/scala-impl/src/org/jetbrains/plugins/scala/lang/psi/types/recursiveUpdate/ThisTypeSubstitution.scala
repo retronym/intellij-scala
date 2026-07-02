@@ -281,7 +281,39 @@ private object ThisTypeSubstitution {
   // `Global.this`) still needs the guard — see testScratchInferencerCanonNoGuard.
   private def canonOn: Boolean = System.getProperty("scala.asf.nocanon") == null
   def noGuard: Boolean = System.getProperty("scala.asf.noguard") != null
+  // PROBE (-Dscala.asf.terminal): a rewriting this-substitution's output is terminal
+  // for the remainder of its fused chain (parallel-substitution semantics).
+  // RESULT of forcing this on suite-wide: 591/592 — only TypeInferenceBugs5Test.
+  // testSCL7043 (Enumeration/T#Value overloads, "Cannot resolve expression") fails,
+  // under BOTH variants: blanket-terminal (skip the whole remainder) and the refined
+  // form (skip only subsequent this-substitutions, letting type-param updates
+  // through). So sequential this-composition is load-bearing somewhere legitimate,
+  // and the discriminator between the growth pump and the legitimate case is not
+  // chain position — it is precisely hasRecursiveThisType arm-1's condition
+  // ("target rooted at the this-type being rewritten"). Terminal-output cannot
+  // replace the guard; it gets within ONE counterexample.
+  def terminalOutput: Boolean = System.getProperty("scala.asf.terminal") != null
   private val inCanon: ThreadLocal[Boolean] = ThreadLocal.withInitial[Boolean](() => false)
+
+  /** Audit a fused chain at application: print chains carrying >= 2 this-substitutions,
+   *  flagging duplicate targets (redundant fusion). Trace-gated. */
+  def auditChain(updates: Array[Update], tp: ScType): Unit = if (on) {
+    var count = 0
+    var i = 0
+    while (i < updates.length) { if (updates(i).isInstanceOf[ThisTypeSubstitution]) count += 1; i += 1 }
+    if (count >= 2) {
+      val ttss = new Array[ThisTypeSubstitution](count)
+      var j = 0; i = 0
+      while (i < updates.length) {
+        updates(i) match { case t: ThisTypeSubstitution => ttss(j) = t; j += 1; case _ => }
+        i += 1
+      }
+      val rendered = ttss.map(t => s"#${idOf(t)} target=${t.target} sfc=${nameOf(t.seenFromClass)}").mkString("  |  ")
+      val distinctTargets = ttss.map(_.target.toString).distinct.length
+      val dup = if (distinctTargets < count) s"  <== DUPLICATE TARGETS ($distinctTargets distinct of $count)" else ""
+      System.err.println(s"${pad}CHAIN-AUDIT[${updates.length} updates, $count this-substs]$dup  applying to: $tp\n$pad   $rendered")
+    }
+  }
 
   // Expositional depth-cap guard mode (-Dscala.asf.maxdepth=N): threadlocal nesting
   // depth of active firings; hasRecursiveThisType blocks purely on depth >= N.
