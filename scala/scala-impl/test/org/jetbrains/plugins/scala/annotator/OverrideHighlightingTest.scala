@@ -400,6 +400,43 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     }
   }
 
+  // PROBE: leaf-only fusion contract ENFORCED (scala.asf.terminal — a rewriting
+  // this-substitution's output is terminal for the rest of its fused chain) with
+  // the structural guard OFF. If the fused pump is the growth mechanism, this
+  // should complete where noguard alone StackOverflows. Also audits chains for
+  // redundant (duplicate-target) this-substitutions.
+  def testScratchTerminalNoGuard(): Unit = {
+    System.setProperty("scala.asf.terminal", "true")
+    System.setProperty("scala.asf.noguard", "true")
+    System.setProperty("scala.asf.trace", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |trait Typers { self: Analyzer =>
+          |  import global._
+          |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
+          |}
+          |trait Infer { self: Analyzer =>
+          |  import global._
+          |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
+          |}
+          |trait Analyzer extends Typers with Infer { val global: Global }
+          |class Global {
+          |  type Type
+          |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+          |  object typer extends analyzer.Typer
+          |}
+        """.stripMargin)
+      System.err.println(s"TERMINAL-NOGUARD-ERRORS -> ${errors.map(_.toString)}")
+    } catch {
+      case _: StackOverflowError => System.err.println("TERMINAL-NOGUARD -> StackOverflowError")
+    } finally {
+      System.clearProperty("scala.asf.terminal")
+      System.clearProperty("scala.asf.noguard")
+      System.clearProperty("scala.asf.trace")
+    }
+  }
+
   def testScratchInferencerCanonNoGuard(): Unit = {
     System.setProperty("scala.asf.noguard", "true") // canonicalize-at-mint is default-on
     try {
