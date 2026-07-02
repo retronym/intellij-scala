@@ -391,12 +391,16 @@ private object ThisTypeSubstitution {
     inst
   }
 
-  /** A this-substitution's REWRITTEN output being handed to further fused updates in
-   *  the same chain (cf. the leaf-only warning at ScSubstitutor.recursiveUpdateImpl):
-   *  later this-substitutions may rewrite this-types INSIDE this output — path
-   *  concatenation within a single pass. */
-  def traceChainFeed(s: ThisTypeSubstitution, from: ScType, to: ScType, remaining: Int): Unit =
-    if (on) System.err.println(s"${pad}CHAIN-FEED #${idOf(s)}  ($from -> $to) fed to $remaining more fused update(s)")
+  /** Every this-substitution REWRITE, with its position in the applying chain:
+   *  `[k/n]` — n == 1 means a BARE (single-update) substitutor; k < n means the
+   *  rewritten output is handed to the remaining fused updates (cf. the leaf-only
+   *  warning at ScSubstitutor.recursiveUpdateImpl): later this-substitutions may
+   *  rewrite this-types INSIDE this output — path concatenation within one pass. */
+  def traceRewrite(s: ThisTypeSubstitution, from: ScType, to: ScType, k: Int, n: Int): Unit =
+    if (on) {
+      val feed = if (k < n) s"  -> fed to ${n - k} more fused update(s)" else ""
+      System.err.println(s"${pad}REWRITE #${idOf(s)} [update $k/$n]  ($from -> $to)$feed")
+    }
 
   /** Print `msg` at the current indent, then descend one level. */
   def enter(msg: => String): Unit = if (on) {
