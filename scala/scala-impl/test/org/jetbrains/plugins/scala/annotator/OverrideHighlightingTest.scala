@@ -287,6 +287,41 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // scalac's lockstep (pre, clazz) walk only ever STRIPS prefixes (`.prefix` per
   // climb) and structurally cannot self-embed. The test records the outcome
   // instead of failing the suite.
+  // EXPOSITIONAL: the REMNANT growth — what still grows under canonicalize-at-mint
+  // (default-on), i.e. the channel the guard's termination role suppresses. The
+  // structural guard is replaced by a pure depth cap (scala.asf.maxdepth) so the
+  // self-embedding rounds can be WATCHED in the trace instead of blocked at first
+  // contact. StackOverflow is caught and recorded in case the cap is insufficient.
+  def testScratchRemnantGrowthTrace(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    System.setProperty("scala.asf.maxdepth", "10")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |trait Typers { self: Analyzer =>
+          |  import global._
+          |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
+          |}
+          |trait Infer { self: Analyzer =>
+          |  import global._
+          |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
+          |}
+          |trait Analyzer extends Typers with Infer { val global: Global }
+          |class Global {
+          |  type Type
+          |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+          |  object typer extends analyzer.Typer
+          |}
+        """.stripMargin)
+      System.err.println(s"REMNANT-ERRORS -> ${errors.map(_.toString)}")
+    } catch {
+      case _: StackOverflowError => System.err.println("REMNANT -> StackOverflowError (cap insufficient)")
+    } finally {
+      System.clearProperty("scala.asf.trace")
+      System.clearProperty("scala.asf.maxdepth")
+    }
+  }
+
   def testScratchInferencerCanonNoGuard(): Unit = {
     System.setProperty("scala.asf.noguard", "true") // canonicalize-at-mint is default-on
     try {

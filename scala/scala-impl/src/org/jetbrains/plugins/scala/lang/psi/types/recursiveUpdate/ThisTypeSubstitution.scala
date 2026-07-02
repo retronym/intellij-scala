@@ -21,7 +21,9 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
   override protected val subst: PartialFunction[LeafType, ScType] = {
     case th: ScThisType if !hasRecursiveThisType(target, th.element) =>
       ThisTypeSubstitution.enter(s"thisTypeAsSeen($th)#${ThisTypeSubstitution.idOf(this)}  [pre=$target, seenFromClass=${ThisTypeSubstitution.nameOf(seenFromClass)}]")
-      val res = doUpdateThisTypeFromClass(th, target, seenFromClass)
+      ThisTypeSubstitution.pushSubst()
+      val res = try doUpdateThisTypeFromClass(th, target, seenFromClass)
+                finally ThisTypeSubstitution.popSubst()
       ThisTypeSubstitution.leave(res)
       res
   }
@@ -78,10 +80,19 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
     }
 
   private def hasRecursiveThisType(tp: ScType, clazz: ScTemplateDefinition): Boolean = {
-    // PROBE: -Dscala.asf.noguard disables the guard entirely — combined with
-    // scala.asf.canonicalize this tests whether mint-point canonicalization
-    // subsumes the guard (without it, this fixture StackOverflows).
-    val res = !ThisTypeSubstitution.noGuard && hasRecursiveThisType0(tp, clazz)
+    // PROBES:
+    //  -Dscala.asf.noguard      disables the guard entirely (StackOverflows even
+    //                           with canonicalize-at-mint — the termination role).
+    //  -Dscala.asf.maxdepth=N   replaces the structural guard by a PURE DEPTH CAP
+    //                           on nested firings, so the remnant (post-
+    //                           canonicalization) growth can be watched for N
+    //                           rounds instead of blocked at first contact.
+    val res =
+      if (ThisTypeSubstitution.noGuard) false
+      else ThisTypeSubstitution.depthCapMode match {
+        case Some(cap) => ThisTypeSubstitution.substDepth >= cap
+        case None      => hasRecursiveThisType0(tp, clazz)
+      }
     ThisTypeSubstitution.traceGuard(this, tp, clazz, res)
     res
   }
@@ -271,6 +282,14 @@ private object ThisTypeSubstitution {
   private def canonOn: Boolean = System.getProperty("scala.asf.nocanon") == null
   def noGuard: Boolean = System.getProperty("scala.asf.noguard") != null
   private val inCanon: ThreadLocal[Boolean] = ThreadLocal.withInitial[Boolean](() => false)
+
+  // Expositional depth-cap guard mode (-Dscala.asf.maxdepth=N): threadlocal nesting
+  // depth of active firings; hasRecursiveThisType blocks purely on depth >= N.
+  private val substDepthTL: ThreadLocal[Int] = ThreadLocal.withInitial[Int](() => 0)
+  def substDepth: Int = substDepthTL.get
+  def depthCapMode: Option[Int] = Option(Integer.getInteger("scala.asf.maxdepth")).map(_.intValue())
+  def pushSubst(): Unit = substDepthTL.set(substDepthTL.get + 1)
+  def popSubst(): Unit = substDepthTL.set(math.max(0, substDepthTL.get - 1))
 
   private def isSingletonLike(t: ScType): Boolean = t match {
     case _: ScThisType      => true
