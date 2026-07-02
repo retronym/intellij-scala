@@ -19,28 +19,81 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
   }
 
   override protected val subst: PartialFunction[LeafType, ScType] = {
-    case th: ScThisType if !hasRecursiveThisType(target, th.element) =>
+    case th: ScThisType if !ThisTypeSubstitution.isConsumed(th.element) &&
+                           (ThisTypeSubstitution.progressMode || !hasRecursiveThisType(target, th.element)) =>
       ThisTypeSubstitution.enter(s"thisTypeAsSeen($th)#${ThisTypeSubstitution.idOf(this)}  [pre=$target, seenFromClass=${ThisTypeSubstitution.nameOf(seenFromClass)}]")
       ThisTypeSubstitution.pushSubst()
-      val res = try doUpdateThisTypeFromClass(th, target, seenFromClass)
-                finally ThisTypeSubstitution.popSubst()
+      val res0 = try doUpdateThisTypeFromClass(th, target, seenFromClass)
+                 finally ThisTypeSubstitution.popSubst()
+      val res =
+        if (ThisTypeSubstitution.progressMode && (res0 ne th) && progressBlocked(res0, th)) {
+          ThisTypeSubstitution.line(s"PROGRESS-BLOCK: root of $res0 still denotes ${th.element.name}.this  -> keep $th")
+          ThisTypeSubstitution.noteConsumes(false)
+          th
+        }
+        else res0
       ThisTypeSubstitution.leave(res)
       res
   }
 
+  // PROBE (-Dscala.asf.progress): replace the hasRecursiveThisType TARGET pre-scan
+  // with a POSTcondition on the walk's output — block a this-rewrite iff the
+  // returned type's prefix-spine root is a this-type whose class is the same as or
+  // an inheritor of the class being rewritten. Rationale (modeled in scala/scala
+  // AsSeenFromTest, commit 5b57ce1e52): such a return makes no progress — it claims
+  // to eliminate `th` but is still rooted in a this-type denoting that same
+  // instance (via inheritance), which is exactly the self-embedding the resolution
+  // loop recirculates into unbounded growth. scalac's thisTypeAsSeen only ever
+  // STRIPS prefixes from `pre`, so its output structurally cannot violate this.
+  // Blocks both the exact pump AND the cross-symbol pump (which the production
+  // guard misses: its inheritor arm tests the inverse direction), while admitting
+  // SCL-7043's legitimate sequential re-anchor (CE.this.enum.type is rooted at
+  // CE.this, and CE AGGREGATES an Enumeration rather than inheriting one).
+  // O(output spine) + one inheritance test, vs the guard's O(type-size) scan.
   @tailrec
-  private def doUpdateThisType(thisTp: ScThisType, target: ScType): ScType =
+  private def spineRootThis(tp: ScType): Option[ScThisType] = tp match {
+    case th: ScThisType                                 => Some(th)
+    case ScProjectionType(pre, _)                       => spineRootThis(pre)
+    case ParameterizedType(ScProjectionType(pre, _), _) => spineRootThis(pre)
+    case _                                              => None
+  }
+
+  // Leaf→leaf narrowings (`Types.this -> Global.this`) are always progress: a bare
+  // this-type carries no structure for the resolution loop to recirculate, and such
+  // narrowing onto an inheritor's this IS the legitimate cake re-anchor (scalac's
+  // matchesPrefixAndClass returns exactly this shape). Only a this-ROOTED PATH whose
+  // root still subsumes the rewritten this is self-embedding fuel.
+  private def progressBlocked(res: ScType, th: ScThisType): Boolean = res match {
+    case _: ScThisType => false
+    case _             => spineRootThis(res).exists(rootTh => isSameOrInheritor(rootTh.element, th))
+  }
+
+  // `escaped` tracks whether the climb has LEFT the target's own projection spine
+  // through a ScThisType -> containingClass hop. A match reached after such an
+  // escape is scalac's UNMATCHED case (the walk fell off `pre`; in scalac the
+  // this-type would be returned unchanged and a later asSeenFrom hop still
+  // applies), so it must NOT consume the this-class for the rest of the fused
+  // chain (SCL-7043: [3/6] Enumeration.this exhausts ValueSet.this and climbs to
+  // Enumeration.this — identity, no consumption — then the load-bearing [4/6]
+  // still rewrites it). A match on the target's own spine is scalac's
+  // matchesPrefixAndClass SUCCESS and consumes (SCL-7008: NM.this matched from
+  // (Z.this baseType Z).prefix — first match wins, later chain elements may not
+  // re-narrow NM.this to SN.this/F.this).
+  @tailrec
+  private def doUpdateThisType(thisTp: ScThisType, target: ScType, escaped: Boolean = false): ScType =
     if (isMoreNarrow(target, thisTp, Set.empty)) {
       ThisTypeSubstitution.line(s"isMoreNarrow(pre=$target, $thisTp) = true  -> $target")
+      ThisTypeSubstitution.noteConsumes(!escaped)
       target
     }
     else {
       containingClassType(target) match {
         case Some(targetContext) =>
           ThisTypeSubstitution.line(s"isMoreNarrow(pre=$target, $thisTp) = false  -> climb enclosing to $targetContext")
-          doUpdateThisType(thisTp, targetContext)
+          doUpdateThisType(thisTp, targetContext, escaped || target.isInstanceOf[ScThisType])
         case _                   =>
           ThisTypeSubstitution.line(s"isMoreNarrow(pre=$target, $thisTp) = false, no enclosing  -> keep $thisTp")
+          ThisTypeSubstitution.noteConsumes(false)
           thisTp
       }
     }
@@ -293,6 +346,58 @@ private object ThisTypeSubstitution {
   // ("target rooted at the this-type being rewritten"). Terminal-output cannot
   // replace the guard; it gets within ONE counterexample.
   def terminalOutput: Boolean = System.getProperty("scala.asf.terminal") != null
+  // PROBE (-Dscala.asf.progress): postcondition guard — see the comment on
+  // ThisTypeSubstitution.progressBlocked. Intended to be combined with
+  // -Dscala.asf.noguard to test full replacement of hasRecursiveThisType.
+  def progressMode: Boolean = System.getProperty("scala.asf.progress") != null
+
+  // PROBE (-Dscala.asf.consumed): first-match-wins per this-class within a fused
+  // chain. Once one chain update has MATCHED a this-leaf of class C (identity
+  // counts — scalac's thisTypeAsSeen stops at its first prefix/class match), the
+  // remainder processing that update's output may not rewrite a this-type of C
+  // again. It MAY rewrite this-types of NEW classes the output introduced — the
+  // legitimate sequential composition (SCL-7043: Enumeration.this ->
+  // CE.this.enum.type introduces CE.this for the next update). Without this,
+  // redundant chain elements (followed()-concatenation duplicates; 3224/3230
+  // multi-this-subst chains) RE-NARROW an already-processed this: SCL-7008's
+  // NM.this -> (identity) -> SN.this -> F.this over-rewrite, where scalac stops
+  // at NM.this. Complementary to Progress: Progress blocks self-embedding
+  // (each pump hop introduces a new class, so consumption alone cannot stop it);
+  // consumption blocks redundant re-narrowing (each redundant hop reuses the
+  // same class, so Progress alone cannot stop it).
+  def consumedMode: Boolean = System.getProperty("scala.asf.consumed") != null
+
+  private val consumedTL: ThreadLocal[Set[ScTemplateDefinition]] =
+    ThreadLocal.withInitial[Set[ScTemplateDefinition]](() => Set.empty)
+
+  // Whether the firing that just completed was a MATCH on the target's spine
+  // (consumes its this-class) vs an escape/exhaustion (does not). Written by
+  // doUpdateThisType, read synchronously by ScSubstitutor right after the
+  // update returned ReplaceWith. Nested firings write earlier and are
+  // overwritten by the outermost walk's final answer.
+  private val lastConsumesTL: ThreadLocal[Boolean] = ThreadLocal.withInitial[Boolean](() => true)
+  def noteConsumes(b: Boolean): Unit = lastConsumesTL.set(b)
+  def lastFiringConsumes: Boolean = lastConsumesTL.get
+
+  def isConsumed(elem: ScTemplateDefinition): Boolean =
+    consumedMode && consumedTL.get.contains(elem)
+
+  def withConsumed[T](elem: ScTemplateDefinition)(op: => T): T = {
+    val saved = consumedTL.get
+    consumedTL.set(saved + elem)
+    try op finally consumedTL.set(saved)
+  }
+
+  /** Scope the consumed set to one top-level chain application: nested
+   *  applications (e.g. baseType recomputes inside a firing) start fresh. */
+  def freshConsumedScope[T](op: => T): T = {
+    val saved = consumedTL.get
+    if (saved.isEmpty) op
+    else {
+      consumedTL.set(Set.empty)
+      try op finally consumedTL.set(saved)
+    }
+  }
   private val inCanon: ThreadLocal[Boolean] = ThreadLocal.withInitial[Boolean](() => false)
 
   /** Audit a fused chain at application: print chains carrying >= 2 this-substitutions,

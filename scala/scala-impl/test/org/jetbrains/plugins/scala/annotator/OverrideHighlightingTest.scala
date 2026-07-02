@@ -1315,4 +1315,104 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
       System.clearProperty("scala.asf.trace")
     }
   }
+
+  // PROBE (-Dscala.asf.progress): the Progress postcondition guard REPLACES
+  // hasRecursiveThisType entirely (the PF condition short-circuits the pre-scan
+  // when progress is on). nocanon makes this the strongest form of the claim:
+  // even with un-canonicalized doubling spellings recirculating, the postcondition
+  // alone must terminate the pump. Without progress, guard-off + nocanon SOEs.
+  def testScratchProgressPump(): Unit = {
+    System.setProperty("scala.asf.progress", "true")
+    System.setProperty("scala.asf.nocanon", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |trait Typers { self: Analyzer =>
+          |  import global._
+          |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
+          |}
+          |trait Infer { self: Analyzer =>
+          |  import global._
+          |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
+          |}
+          |trait Analyzer extends Typers with Infer { val global: Global }
+          |class Global {
+          |  type Type
+          |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+          |  object typer extends analyzer.Typer
+          |}
+        """.stripMargin)
+      System.err.println(s"PROGRESS-PUMP-ERRORS -> ${errors.map(_.toString)}")
+      assertNothing(errors)
+    } catch {
+      case soe: StackOverflowError =>
+        System.err.println("PROGRESS-PUMP -> StackOverflowError")
+        throw soe
+    } finally {
+      System.clearProperty("scala.asf.progress")
+      System.clearProperty("scala.asf.nocanon")
+    }
+  }
+
+  // Progress mode on the terminal-probe's one counterexample: the sequential
+  // re-anchor SCL-7043 needs must still be admitted (CE aggregates an Enumeration,
+  // does not inherit one — the Progress inheritance test is false on its root).
+  def testScratchSCL7043Progress(): Unit = {
+    System.setProperty("scala.asf.progress", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |abstract class C[T] {
+          |  def lee : T
+          |}
+          |
+          |class CE[T <: Enumeration](val enum: T) extends C[T#Value] {
+          |  def foo(t: T#Value) = 1
+          |  def foo(s: String) = "text"
+          |
+          |  foo(enum.values.toList(0))
+          |  def lee = enum.values.toList(0)
+          |}
+        """.stripMargin)
+      System.err.println(s"SCL7043-PROGRESS-ERRORS -> ${errors.map(_.toString)}")
+      assertNothing(errors)
+    } finally {
+      System.clearProperty("scala.asf.progress")
+    }
+  }
+
+  // SCL7008: the one divergence when Progress replaces the guard suite-wide —
+  // inferred spelling flips NM.this.Name -> F.this.Name (same instance via the
+  // self-type; the golden pins scalac's NM.this spelling). Trace which firing
+  // the old guard blocked that Progress admits.
+  def testScratchSCL7008Trace(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |trait SCL7008 {
+          |  trait N { self: F =>
+          |    trait Name
+          |  }
+          |  trait SN { self: F =>
+          |    object nme extends Z {
+          |
+          |    }
+          |  }
+          |  class F extends N with SN with NM
+          |
+          |  trait NM { self: F =>
+          |    trait NMC
+          |    trait Z extends NMC { self: nme.type =>
+          |      def one(name: Name): Name = null
+          |      def two(name: Name) = one(name)
+          |    }
+          |  }
+          |}
+        """.stripMargin)
+      System.err.println(s"SCL7008-ERRORS -> ${errors.map(_.toString)}")
+    } finally {
+      System.clearProperty("scala.asf.trace")
+    }
+  }
 }

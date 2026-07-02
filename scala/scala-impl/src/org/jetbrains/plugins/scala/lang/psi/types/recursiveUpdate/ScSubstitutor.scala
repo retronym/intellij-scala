@@ -5,6 +5,8 @@ import com.intellij.psi.{PsiClass, PsiMember, PsiNamedElement}
 import org.jetbrains.plugins.scala.extensions.{ArrayExt, PsiNamedElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.base.types.{ScTypeArgs, ScTypeArgument, ScTypeElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params.{ScParameter, TypeParamId, TypeParamIdOwner}
+import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTemplateDefinition
+import org.jetbrains.plugins.scala.lang.psi.types.api.designator.ScThisType
 import org.jetbrains.plugins.scala.lang.psi.types.Compatibility.Expression
 import org.jetbrains.plugins.scala.lang.psi.types.ScType
 import org.jetbrains.plugins.scala.lang.psi.types.api.{Covariant, TypeParameter, TypeParameterType, UndefinedType, Variance}
@@ -59,7 +61,9 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
       cache ++= this.allTypeParamsMap
 
     ThisTypeSubstitution.auditChain(substitutions, `type`)
-    recursiveUpdateImpl(`type`)(SubtypeUpdaterNoVariance, Set.empty)
+    ThisTypeSubstitution.freshConsumedScope {
+      recursiveUpdateImpl(`type`)(SubtypeUpdaterNoVariance, Set.empty)
+    }
   }
 
   //This method allows application of different `Update` functions in a single pass (see ScSubstitutor).
@@ -90,11 +94,27 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
               ThisTypeSubstitution.terminalOutput
             case _ => false
           }
+          // PROBE (-Dscala.asf.consumed): a this-leaf matched by this update (identity
+          // included) is CONSUMED for its class — the remainder processing of `res` may
+          // not rewrite a this-type of the same class again (first-match-wins, as in
+          // scalac's thisTypeAsSeen), though it may rewrite this-types of NEW classes
+          // `res` introduced. See ThisTypeSubstitution.consumedMode.
+          val consumedClass: ScTemplateDefinition = currentUpdate match {
+            case _: ThisTypeSubstitution if ThisTypeSubstitution.consumedMode &&
+                                            ThisTypeSubstitution.lastFiringConsumes =>
+              scType match {
+                case th: ScThisType => th.element
+                case _              => null
+              }
+            case _ => null
+          }
           if (terminal) {
             val rest = restWithoutThisTypeSubstitutions
             if (rest.isEmpty) res
             else new ScSubstitutor(rest).recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
           }
+          else if (consumedClass != null)
+            continueConsumed(consumedClass, res, variance, isLazySubtype)(subtypeUpdater, visited)
           else next.recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
         case Stop => scType
         case ProcessSubtypes =>
@@ -110,6 +130,14 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
       }
     }
   }
+
+  // Out-of-line so recursiveUpdateImpl's own tail call stays a tail call.
+  private def continueConsumed(consumedClass: ScTemplateDefinition, res: ScType,
+                               variance: Variance, isLazySubtype: Boolean)
+                              (subtypeUpdater: SubtypeUpdater, visited: Set[ScType]): ScType =
+    ThisTypeSubstitution.withConsumed(consumedClass) {
+      next.recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
+    }
 
   // The remainder of the chain after fromIndex, with this-substitutions dropped —
   // used by the terminal-output probe so non-this updates (type-param instantiation)
