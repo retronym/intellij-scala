@@ -77,8 +77,9 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
       currentUpdate(scType, variance) match {
         case ReplaceWith(res) =>
           currentUpdate match {
-            case tts: ThisTypeSubstitution if (res ne scType) && (fromIndex + 1) < substitutions.length =>
-              ThisTypeSubstitution.traceChainFeed(tts, scType, res, substitutions.length - fromIndex - 1)
+            case tts: ThisTypeSubstitution if res ne scType =>
+              // position [k/n]: n == 1 -> bare substitutor; k < n -> output fed to the rest of the fused chain
+              ThisTypeSubstitution.traceRewrite(tts, scType, res, fromIndex + 1, substitutions.length)
             case _ =>
           }
           next.recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
