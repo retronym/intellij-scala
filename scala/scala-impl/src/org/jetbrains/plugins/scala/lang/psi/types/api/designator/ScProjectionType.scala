@@ -255,7 +255,7 @@ final class ScProjectionType private(val projected: ScType,
           case t: ScTypedDefinition if t.isStable =>
             t.`type`() match {
               case Right(singleton: DesignatorOwner) if singleton.isSingleton =>
-                val newSubst = actualSubst.followed(ScSubstitutor(projected))
+                val newSubst = actualSubst.followed(ScSubstitutor(projected, ScSubstitutor.declarationAnchor(t)))
                 r.equiv(newSubst(singleton), constraints, falseUndef)
               // Cake-pattern stable path: `pre.global` (this projection) where `global: Global`
               // (not singleton-typed) vs `Global.this`. When the val's type class matches the
@@ -337,8 +337,7 @@ object ScProjectionType {
             TypeDefinitionMembers.getSignatures(cls).forName(named.name).iterator
               .map(_.namedElement)
               .collect { case td: ScTypedDefinition if td.isStable => td }
-              .flatMap(e => e.`type`().toOption.iterator)
-              .map(ScSubstitutor(proj.projected).apply)
+              .flatMap(e => e.`type`().toOption.iterator.map(ScSubstitutor(proj.projected, ScSubstitutor.declarationAnchor(e)).apply))
               .collectFirst { case t if isSingletonLike(t) => t }
           }
         }.flatten

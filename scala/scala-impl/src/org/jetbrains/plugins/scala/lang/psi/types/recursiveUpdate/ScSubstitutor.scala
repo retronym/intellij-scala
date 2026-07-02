@@ -1,8 +1,8 @@
 package org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate
 
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.psi.PsiClass
-import org.jetbrains.plugins.scala.extensions.ArrayExt
+import com.intellij.psi.{PsiClass, PsiMember, PsiNamedElement}
+import org.jetbrains.plugins.scala.extensions.{ArrayExt, PsiNamedElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.base.types.{ScTypeArgs, ScTypeArgument, ScTypeElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params.{ScParameter, TypeParamId, TypeParamIdOwner}
 import org.jetbrains.plugins.scala.lang.psi.types.Compatibility.Expression
@@ -237,6 +237,16 @@ object ScSubstitutor {
 
   def apply(updateThisType: ScType, seenFromClass: PsiClass): ScSubstitutor =
     ScSubstitutor(ThisTypeSubstitution.traceNew(ThisTypeSubstitution(ThisTypeSubstitution.canonicalizeTarget(updateThisType), seenFromClass)))
+
+  /** The declaration-site anchor for an asSeenFrom-style this-substitution over
+   *  `member`'s type: the class containing `member`'s name context — scalac's
+   *  `sym.owner` in `sym.info.asSeenFrom(pre, sym.owner)`. Null when there is no
+   *  containing class (top-level / synthetic / local), which degrades to the
+   *  legacy anchorless `isMoreNarrow` walk in [[ThisTypeSubstitution]]. */
+  def declarationAnchor(member: PsiNamedElement): PsiClass = member.nameContext match {
+    case m: PsiMember => m.getContainingClass
+    case _            => null
+  }
 
   def paramToExprType(parameters: Seq[Parameter], expressions: Seq[Expression], useExpected: Boolean = true): ScSubstitutor =
     ScSubstitutor(ParamsToExprs(parameters, expressions, useExpected))
