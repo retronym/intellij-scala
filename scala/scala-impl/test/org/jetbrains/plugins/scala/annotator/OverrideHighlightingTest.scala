@@ -277,200 +277,6 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     }
   }
 
-  // PROBE 3c RESULT: canonicalize ON + hasRecursiveThisType OFF still
-  // StackOverflows (pure updateProjectionType/recursiveUpdateImpl descent of an
-  // unboundedly deep type). So mint-point canonicalization subsumes only the
-  // guard's SPELLING-growth role, not its TERMINATION role: even the canonical
-  // spelling `Global.this.analyzer.type` contains `Global.this`, and with arm-1
-  // off, rewriting `Global.this` leaves inside it self-embeds the target — the
-  // 1-arg/null-seenFromClass isMoreNarrow walk returns the WHOLE target, whereas
-  // scalac's lockstep (pre, clazz) walk only ever STRIPS prefixes (`.prefix` per
-  // climb) and structurally cannot self-embed. The test records the outcome
-  // instead of failing the suite.
-  // EXPOSITIONAL: the REMNANT growth — what still grows under canonicalize-at-mint
-  // (default-on), i.e. the channel the guard's termination role suppresses. The
-  // structural guard is replaced by a pure depth cap (scala.asf.maxdepth) so the
-  // self-embedding rounds can be WATCHED in the trace instead of blocked at first
-  // contact. StackOverflow is caught and recorded in case the cap is insufficient.
-  //
-  // ═══ IntelliJ, one growth round (this test's trace; nesting depth ≈ 2 of 10) ═══
-  //
-  //   NEW #1d91d21d  target=Infer.this.global.analyzer.global.analyzer.type  seenFromClass=<null>
-  //        at BaseProcessor.processTypeImpl:315 < ...       ◄── round N's input: a 2× spelling, recirculated
-  //                                                         ◄── as a fresh 1-arg substitutor target by resolution
-  //   GUARD#1d91d21d hasRecursiveThisType(Global.this, pre=…2×…) = false
-  //   thisTypeAsSeen(Global.this.type)#1d91d21d  [pre=…analyzer.global.analyzer.type]
-  //     isMoreNarrow(…2×…, Global.this.type) = false  -> climb enclosing to …analyzer.global.type
-  //     isMoreNarrow(…analyzer.global.type, Global.this.type) = true
-  //   = Infer.this.global.analyzer.global.type              ◄── the Global.this rewrite is BENIGN: the climb
-  //                                                         ◄── strips the trailing .analyzer — walk working
-  //   GUARD#1d91d21d hasRecursiveThisType(Infer.this, pre=…2×…) = false
-  //                                                         ◄── ★ THE ADMISSION. In production arm-1 answers
-  //                                                         ◄── TRUE: target is ROOTED at Infer.this and we
-  //                                                         ◄── are about to rewrite Infer.this.
-  //   thisTypeAsSeen(Infer.this.type)#1d91d21d  [pre=…analyzer.global.analyzer.type]
-  //     isMoreNarrow(…2×…, Infer.this.type) = true  -> …2×…
-  //                                                         ◄── ★ THE SELF-EMBEDDING REWRITE: the path's class
-  //                                                         ◄── (Analyzer) extends Infer, so the WHOLE target
-  //                                                         ◄── stands in for Infer.this — defensible by
-  //                                                         ◄── subtyping, poison by structure: the target now
-  //                                                         ◄── contains itself where its root was.
-  //   = Infer.this.global.analyzer.global.analyzer.type
-  //   NEW #78d1c3e8  target=Infer.this.global.analyzer.global.analyzer.global.type
-  //        at BaseProcessor.processTypeImpl:315 < ...       ◄── ★ THE +1: resolution projects .global onto the
-  //                                                         ◄── poisoned path and recirculates it as round
-  //                                                         ◄── N+1's target: 2× -> 3×. Minted by resolution-
-  //                                                         ◄── side ScProjectionType construction, NOT by
-  //                                                         ◄── updateProjectionType — the canonicalize-at-mint
-  //                                                         ◄── hook never sees it (4 CANON collapses in the
-  //                                                         ◄── whole run, all at 1×). 60+ segments later:
-  //                                                         ◄── StackOverflowError, from mere descent.
-  //   Depth never nears the cap of 10 — growth is SEQUENTIAL recirculation (round N's
-  //   output -> round N+1's input through fresh top-level substitutors), not nesting.
-  //   No depth limit can bound it; arm-1 keys on the PRECONDITION (target rooted at the
-  //   this-type being rewritten), which is why it is irreplaceable by depth or spelling
-  //   heuristics.
-  //
-  // ═══ scalac, the same example (scala/scala AsSeenFromTest.remnantFixpoint) ═══
-  //
-  //   ===== ROUND 1: pre = Analyzer.this.global.type =====
-  //   select .analyzer -> Analyzer.this.global.analyzer.type
-  //   member 'global' info = Analyzer.this.global.type      ◄── the refinement decl was re-anchored ONCE, to
-  //                                                         ◄── the selection prefix, by the cached copied-
-  //                                                         ◄── refinement widen — memberType, materialized
-  //   apply(Analyzer.this.global.type : NullaryMethodType)
-  //     apply(Analyzer.this.global.type : UniqueSingleType)
-  //       apply(Analyzer.this.type : UniqueThisType)
-  //         thisTypeAsSeen(Analyzer.this.type)
-  //           matchesPrefixAndClass(...)(candidate=trait Analyzer) = false
-  //         = Analyzer.this.type                            ◄── nothing to do; info already canonical
-  //   underlying(pre.analyzer.global) = Analyzer.this.global.type   ◄── == pre. NET GROWTH: 0
-  //   ===== ROUND 2: pre = Analyzer.this.global.type =====  ◄── FIXPOINT — byte-identical to round 1
-  //   ===== ROUND 3: pre = Analyzer.this.global.type =====  ◄── and again
-  //
-  //   POISON STEP: Infer.this asSeenFrom (pre=Analyzer.this.global.analyzer.type, clazz=Infer)
-  //   = Analyzer.this.global.analyzer.type                  ◄── scalac performs the IDENTICAL root-to-path
-  //                                                         ◄── rewrite — once. The divergence is entirely in
-  //                                                         ◄── what happens next: scalac consumes the result;
-  //                                                         ◄── IntelliJ recirculates it as a fresh target
-  //                                                         ◄── whose root gets rewritten AGAIN.
-  //   DEEP = Analyzer.this.global.(analyzer.global.)×3type  (built by hand)
-  //   underlying(deep.analyzer.global) = deep               ◄── ONE layer stripped — exactly what selection
-  //                                                         ◄── added. scalac does NOT eagerly collapse deep
-  //                                                         ◄── to P0; it merely never grows a spelling.
-  //
-  // ═══ The invariant separating the engines ═══
-  //
-  //   scalac:    underlying(pre.analyzer.global) == pre      for ANY pre  -> net 0/round -> fixpoint, no guard
-  //   IntelliJ:  next-target(pre.analyzer.global) == pre+1 layer          -> net +1/round -> guard or SOE
-  //
-  //   Round-trip NEUTRALITY, not canonicalization, is scalac's actual discipline: the
-  //   copied-refinement mechanism bakes the once-re-anchored member info into the cached
-  //   widened type, making `underlying` the exact inverse of selection. (Canonicalize-at-
-  //   mint is thus MORE aggressive than scalac — semantically sound, but the faithful
-  //   product-fix target is neutrality of designatorSingletonType: underlying(pre.member)
-  //   anchored at pre — a cheaper contract to enforce and cache.)
-  def testScratchRemnantGrowthTrace(): Unit = {
-    System.setProperty("scala.asf.trace", "true")
-    System.setProperty("scala.asf.maxdepth", "10")
-    try {
-      val errors = errorsFromScalaCode(
-        """
-          |trait Typers { self: Analyzer =>
-          |  import global._
-          |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
-          |}
-          |trait Infer { self: Analyzer =>
-          |  import global._
-          |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
-          |}
-          |trait Analyzer extends Typers with Infer { val global: Global }
-          |class Global {
-          |  type Type
-          |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
-          |  object typer extends analyzer.Typer
-          |}
-        """.stripMargin)
-      System.err.println(s"REMNANT-ERRORS -> ${errors.map(_.toString)}")
-    } catch {
-      case _: StackOverflowError => System.err.println("REMNANT -> StackOverflowError (cap insufficient)")
-    } finally {
-      System.clearProperty("scala.asf.trace")
-      System.clearProperty("scala.asf.maxdepth")
-    }
-  }
-
-  // PROBE: leaf-only fusion contract ENFORCED (scala.asf.terminal — a rewriting
-  // this-substitution's output is terminal for the rest of its fused chain) with
-  // the structural guard OFF. If the fused pump is the growth mechanism, this
-  // should complete where noguard alone StackOverflows. Also audits chains for
-  // redundant (duplicate-target) this-substitutions.
-  def testScratchTerminalNoGuard(): Unit = {
-    System.setProperty("scala.asf.terminal", "true")
-    System.setProperty("scala.asf.noguard", "true")
-    System.setProperty("scala.asf.trace", "true")
-    try {
-      val errors = errorsFromScalaCode(
-        """
-          |trait Typers { self: Analyzer =>
-          |  import global._
-          |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
-          |}
-          |trait Infer { self: Analyzer =>
-          |  import global._
-          |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
-          |}
-          |trait Analyzer extends Typers with Infer { val global: Global }
-          |class Global {
-          |  type Type
-          |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
-          |  object typer extends analyzer.Typer
-          |}
-        """.stripMargin)
-      System.err.println(s"TERMINAL-NOGUARD-ERRORS -> ${errors.map(_.toString)}")
-    } catch {
-      case _: StackOverflowError => System.err.println("TERMINAL-NOGUARD -> StackOverflowError")
-    } finally {
-      System.clearProperty("scala.asf.terminal")
-      System.clearProperty("scala.asf.noguard")
-      System.clearProperty("scala.asf.trace")
-    }
-  }
-
-  def testScratchInferencerCanonNoGuard(): Unit = {
-    System.setProperty("scala.asf.noguard", "true") // canonicalize-at-mint is default-on
-    try {
-      val errors = errorsFromScalaCode(
-        """
-          |trait Typers { self: Analyzer =>
-          |  import global._
-          |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
-          |}
-          |trait Infer { self: Analyzer =>
-          |  import global._
-          |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
-          |}
-          |trait Analyzer extends Typers with Infer { val global: Global }
-          |class Global {
-          |  type Type
-          |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
-          |  object typer extends analyzer.Typer
-          |}
-        """.stripMargin)
-      System.err.println(s"CANON-NOGUARD-ERRORS -> ${errors.map(_.toString)}")
-    } catch {
-      case _: StackOverflowError =>
-        System.err.println("CANON-NOGUARD -> StackOverflowError (guard's termination role NOT subsumed by canonicalization)")
-    } finally {
-      System.clearProperty("scala.asf.noguard")
-    }
-  }
-
-  // SCL-21947, fourth shape: the singleton val-path `gen.global` (refined to
-  // `Global.this.type`) again fails to collapse to `global`, but this time the
-  // conformance crosses inheritance: `gen.global.Block <: Tree` (= `global.Tree`)
-  // because `Block extends Tree`. The same-member case (`gen.global.Tree`) is fine;
-  // the across-inheritance case was a false "type mismatch". scalac accepts it.
   def testSCL21947GenBlock(): Unit = {
     val code =
       """
@@ -1258,42 +1064,14 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     ): _*)
   }
 
-  // Step 0 of FUSED-SUBST-SCALAC.md: capture the chain SCL-7043 needs, under
-  // blanket terminal-output fusion (a rewriting this-substitution's output is
-  // not processed by the remainder of its own chain). testSCL7043 is the one
-  // suite counterexample to terminal-output curing the growth pump (591/592) —
-  // this trace records WHICH this-substitution rewrite gets skipped that the
-  // correct inferred type (Int, via the `T#Value` / Enumeration overload) needs.
+  // Trace of the SCL-7043 chain — the canonical LEGITIMATE sequential composition:
+  // `[update 1/2] Enumeration.this.type -> CE.this.enum.type` introduces CE.this,
+  // which `[update 2/2]` (target=CE.this.enum.type sfc=CE) must then re-anchor.
+  // PROGRESS admits update 1 (its output is rooted at CE.this, and CE AGGREGATES
+  // an Enumeration rather than inheriting one) and CONSUMED does not block update 2
+  // (CE is a NEW class introduced by update 1's output). This was the counterexample
+  // that falsified the terminal-output probe (see git history).
   def testScratchSCL7043Trace(): Unit = {
-    System.setProperty("scala.asf.trace", "true")
-    System.setProperty("scala.asf.terminal", "true")
-    try {
-      val errors = errorsFromScalaCode(
-        """
-          |abstract class C[T] {
-          |  def lee : T
-          |}
-          |
-          |class CE[T <: Enumeration](val enum: T) extends C[T#Value] {
-          |  def foo(t: T#Value) = 1
-          |  def foo(s: String) = "text"
-          |
-          |  foo(enum.values.toList(0))
-          |  def lee = enum.values.toList(0)
-          |}
-        """.stripMargin)
-      System.err.println(s"SCL7043-ERRORS -> ${errors.map(_.toString)}")
-    } finally {
-      System.clearProperty("scala.asf.trace")
-      System.clearProperty("scala.asf.terminal")
-    }
-  }
-
-  // Same fixture, production behaviour (guard on, terminal off) — to compare
-  // against testScratchSCL7043Trace and see what the GUARD does with the
-  // `[update 1/2] Enumeration.this.type -> CE.this.enum.type` / `[update 2/2]
-  // target=CE.this.enum.type sfc=CE` chain that terminal-output breaks.
-  def testScratchSCL7043TraceProd(): Unit = {
     System.setProperty("scala.asf.trace", "true")
     try {
       val errors = errorsFromScalaCode(
@@ -1316,13 +1094,13 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     }
   }
 
-  // PROBE (-Dscala.asf.progress): the Progress postcondition guard REPLACES
-  // hasRecursiveThisType entirely (the PF condition short-circuits the pre-scan
-  // when progress is on). nocanon makes this the strongest form of the claim:
-  // even with un-canonicalized doubling spellings recirculating, the postcondition
-  // alone must terminate the pump. Without progress, guard-off + nocanon SOEs.
-  def testScratchProgressPump(): Unit = {
-    System.setProperty("scala.asf.progress", "true")
+  // The growth-pump fixture (SCL-21947 Inferencer shape) under the production
+  // PROGRESS + CONSUMED rules, with canonicalize-at-mint DISABLED — the strongest
+  // form of the termination claim: even with un-canonicalized doubling spellings
+  // recirculating, the progress postcondition alone holds the fixpoint. (The old
+  // hasRecursiveThisType guard is gone; before Progress, this configuration
+  // StackOverflowed.)
+  def testScratchPumpFixpoint(): Unit = {
     System.setProperty("scala.asf.nocanon", "true")
     try {
       val errors = errorsFromScalaCode(
@@ -1342,49 +1120,17 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
           |  object typer extends analyzer.Typer
           |}
         """.stripMargin)
-      System.err.println(s"PROGRESS-PUMP-ERRORS -> ${errors.map(_.toString)}")
+      System.err.println(s"PUMP-FIXPOINT-ERRORS -> ${errors.map(_.toString)}")
       assertNothing(errors)
-    } catch {
-      case soe: StackOverflowError =>
-        System.err.println("PROGRESS-PUMP -> StackOverflowError")
-        throw soe
     } finally {
-      System.clearProperty("scala.asf.progress")
       System.clearProperty("scala.asf.nocanon")
     }
   }
 
-  // Progress mode on the terminal-probe's one counterexample: the sequential
-  // re-anchor SCL-7043 needs must still be admitted (CE aggregates an Enumeration,
-  // does not inherit one — the Progress inheritance test is false on its root).
-  def testScratchSCL7043Progress(): Unit = {
-    System.setProperty("scala.asf.progress", "true")
-    try {
-      val errors = errorsFromScalaCode(
-        """
-          |abstract class C[T] {
-          |  def lee : T
-          |}
-          |
-          |class CE[T <: Enumeration](val enum: T) extends C[T#Value] {
-          |  def foo(t: T#Value) = 1
-          |  def foo(s: String) = "text"
-          |
-          |  foo(enum.values.toList(0))
-          |  def lee = enum.values.toList(0)
-          |}
-        """.stripMargin)
-      System.err.println(s"SCL7043-PROGRESS-ERRORS -> ${errors.map(_.toString)}")
-      assertNothing(errors)
-    } finally {
-      System.clearProperty("scala.asf.progress")
-    }
-  }
-
-  // SCL7008: the one divergence when Progress replaces the guard suite-wide —
-  // inferred spelling flips NM.this.Name -> F.this.Name (same instance via the
-  // self-type; the golden pins scalac's NM.this spelling). Trace which firing
-  // the old guard blocked that Progress admits.
+  // SCL7008: the shape that motivated the CONSUMED rule — redundant followed()
+  // chain elements would re-narrow an already-matched this (NM.this -> SN.this ->
+  // F.this) where scalac (and the golden) stop at NM.this; first-spine-match-wins
+  // preserves NM.this. Trace of the chain compositions.
   def testScratchSCL7008Trace(): Unit = {
     System.setProperty("scala.asf.trace", "true")
     try {
