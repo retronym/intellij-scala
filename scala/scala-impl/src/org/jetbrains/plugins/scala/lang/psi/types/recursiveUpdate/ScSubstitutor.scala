@@ -5,6 +5,8 @@ import com.intellij.psi.{PsiClass, PsiMember, PsiNamedElement}
 import org.jetbrains.plugins.scala.extensions.{ArrayExt, PsiNamedElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.base.types.{ScTypeArgs, ScTypeArgument, ScTypeElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params.{ScParameter, TypeParamId, TypeParamIdOwner}
+import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTemplateDefinition
+import org.jetbrains.plugins.scala.lang.psi.types.api.designator.ScThisType
 import org.jetbrains.plugins.scala.lang.psi.types.Compatibility.Expression
 import org.jetbrains.plugins.scala.lang.psi.types.ScType
 import org.jetbrains.plugins.scala.lang.psi.types.api.{Covariant, TypeParameter, TypeParameterType, UndefinedType, Variance}
@@ -58,7 +60,9 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
     if (cacheSubstitutions)
       cache ++= this.allTypeParamsMap
 
-    recursiveUpdateImpl(`type`)(using SubtypeUpdaterNoVariance, Set.empty)
+    ThisTypeSubstitution.freshConsumedScope {
+      recursiveUpdateImpl(`type`)(using SubtypeUpdaterNoVariance, Set.empty)
+    }
   }
 
   //This method allows application of different `Update` functions in a single pass (see ScSubstitutor).
@@ -76,7 +80,20 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
 
       currentUpdate(scType, variance) match {
         case ReplaceWith(res) =>
-          next.recursiveUpdateImpl(res, variance, isLazySubtype)(using subtypeUpdater, visited)
+          // CONSUMED (see ThisTypeSubstitution): when a this-substitution matched `C.this`
+          // on its target's spine, the rest of the chain may not re-spell `C.this` as
+          // another this-type while processing `res`.
+          val consumedClass: ScTemplateDefinition = currentUpdate match {
+            case _: ThisTypeSubstitution if ThisTypeSubstitution.lastFiringConsumes =>
+              scType match {
+                case th: ScThisType => th.element
+                case _              => null
+              }
+            case _ => null
+          }
+          if (consumedClass != null)
+            continueConsumed(consumedClass, res, variance, isLazySubtype)(subtypeUpdater, visited)
+          else next.recursiveUpdateImpl(res, variance, isLazySubtype)(using subtypeUpdater, visited)
         case Stop => scType
         case ProcessSubtypes =>
           val newVisited = if (isLazySubtype) visited + scType else visited
@@ -91,6 +108,14 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
       }
     }
   }
+
+  // Out-of-line so recursiveUpdateImpl's own tail call stays a tail call.
+  private def continueConsumed(consumedClass: ScTemplateDefinition, res: ScType,
+                               variance: Variance, isLazySubtype: Boolean)
+                              (subtypeUpdater: SubtypeUpdater, visited: Set[ScType]): ScType =
+    ThisTypeSubstitution.withConsumed(consumedClass) {
+      next.recursiveUpdateImpl(res, variance, isLazySubtype)(using subtypeUpdater, visited)
+    }
 
   def followed(other: ScSubstitutor): ScSubstitutor = {
     assertFullSubstitutor()
