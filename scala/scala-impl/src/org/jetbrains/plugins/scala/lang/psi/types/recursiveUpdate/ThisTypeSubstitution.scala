@@ -18,15 +18,30 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
     case _    => s"`this` -> $target asSeenFrom $seenFromClass"
   }
 
+  // Two rules make this-substitution sound without the former hasRecursiveThisType
+  // structural guard (derived and validated in scala/scala's IntelliJ-replica model,
+  // test/junit/scala/reflect/internal/ijmodel + AsSeenFromTest):
+  //
+  //   PROGRESS  (postcondition, in this PF): refuse a rewrite whose output is a
+  //     this-ROOTED PATH still rooted, via inheritance, in the class being
+  //     rewritten — no progress => self-embedding => the recirculation fuel of
+  //     the growth pump.  See `progressBlocked`.
+  //   CONSUMED  (composition scope, enforced with ScSubstitutor): first
+  //     spine-match per this-class wins within one chain application — scalac's
+  //     one-thisTypeAsSeen-walk-per-occurrence discipline.  See `isConsumed` /
+  //     `noteConsumes` and ScSubstitutor.recursiveUpdateImpl.
+  //
+  // Versus the old guard: O(output spine) + one inheritance test per firing
+  // instead of an O(type-size) target scan; blocks the cross-symbol pump the
+  // guard provably missed (its inheritor arm tested the inverse direction); and
+  // needs no object carve-out (an object-rooted return has a projection root, so
+  // PROGRESS admits it by construction — the SCL-18532/SCL-3654 tension retires).
   override protected val subst: PartialFunction[LeafType, ScType] = {
-    case th: ScThisType if !ThisTypeSubstitution.isConsumed(th.element) &&
-                           (ThisTypeSubstitution.progressMode || !hasRecursiveThisType(target, th.element)) =>
+    case th: ScThisType if !ThisTypeSubstitution.isConsumed(th.element) =>
       ThisTypeSubstitution.enter(s"thisTypeAsSeen($th)#${ThisTypeSubstitution.idOf(this)}  [pre=$target, seenFromClass=${ThisTypeSubstitution.nameOf(seenFromClass)}]")
-      ThisTypeSubstitution.pushSubst()
-      val res0 = try doUpdateThisTypeFromClass(th, target, seenFromClass)
-                 finally ThisTypeSubstitution.popSubst()
+      val res0 = doUpdateThisTypeFromClass(th, target, seenFromClass)
       val res =
-        if (ThisTypeSubstitution.progressMode && (res0 ne th) && progressBlocked(res0, th)) {
+        if ((res0 ne th) && progressBlocked(res0, th)) {
           ThisTypeSubstitution.line(s"PROGRESS-BLOCK: root of $res0 still denotes ${th.element.name}.this  -> keep $th")
           ThisTypeSubstitution.noteConsumes(false)
           th
@@ -36,11 +51,10 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
       res
   }
 
-  // PROBE (-Dscala.asf.progress): replace the hasRecursiveThisType TARGET pre-scan
-  // with a POSTcondition on the walk's output — block a this-rewrite iff the
+  // PROGRESS: a POSTcondition on the walk's output — block a this-rewrite iff the
   // returned type's prefix-spine root is a this-type whose class is the same as or
   // an inheritor of the class being rewritten. Rationale (modeled in scala/scala
-  // AsSeenFromTest, commit 5b57ce1e52): such a return makes no progress — it claims
+  // AsSeenFromTest + ijmodel): such a return makes no progress — it claims
   // to eliminate `th` but is still rooted in a this-type denoting that same
   // instance (via inheritance), which is exactly the self-embedding the resolution
   // loop recirculates into unbounded growth. scalac's thisTypeAsSeen only ever
@@ -130,44 +144,6 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
           ThisTypeSubstitution.line(s"${clazz.name} not a base of pre=$target  -> narrow against pre")
           doUpdateThisType(thisTp, target)
       }
-    }
-
-  private def hasRecursiveThisType(tp: ScType, clazz: ScTemplateDefinition): Boolean = {
-    // PROBES:
-    //  -Dscala.asf.noguard      disables the guard entirely (StackOverflows even
-    //                           with canonicalize-at-mint — the termination role).
-    //  -Dscala.asf.maxdepth=N   replaces the structural guard by a PURE DEPTH CAP
-    //                           on nested firings, so the remnant (post-
-    //                           canonicalization) growth can be watched for N
-    //                           rounds instead of blocked at first contact.
-    val res =
-      if (ThisTypeSubstitution.noGuard) false
-      else ThisTypeSubstitution.depthCapMode match {
-        case Some(cap) => ThisTypeSubstitution.substDepth >= cap
-        case None      => hasRecursiveThisType0(tp, clazz)
-      }
-    ThisTypeSubstitution.traceGuard(this, tp, clazz, res)
-    res
-  }
-
-  private def hasRecursiveThisType0(tp: ScType, clazz: ScTemplateDefinition): Boolean =
-    tp.subtypeExists {
-      // Genuine recursion: the target already mentions `clazz`'s own this-type.
-      // Substituting would nest the target inside itself, so always guard this.
-      case ScThisType(`clazz`)                   => true
-      // Object this-types are terminal: an `object`'s linearization is fixed and its
-      // `this` re-anchors to a concrete path exactly once (e.g. `gen.this` ->
-      // `pre.gen`), leaving only the prefix's (super-)trait this-types, which are
-      // handled by their own substitution. So the inheritor-direction suppression
-      // below (added for SCL-18532, a runaway-recursion *perf* fix on the nsc cake
-      // `Typers.scala`) is unnecessary for objects and wrongly blocks re-anchoring
-      // an object member reached through a path (SCL-21947 shape 7).
-      // TODO revisit: the broader trait self-type tension (SCL-18532 <-> SCL-3654)
-      //   is still resolved coarsely by `isSameOrInheritor` below; a principled fix
-      //   would make this direction-aware rather than object-scoped.
-      case _: ScThisType if clazz.is[ScObject]   => false
-      case tpe: ScThisType                       => isSameOrInheritor(clazz, tpe)
-      case _                                     => false
     }
 
   private def containingClassType(tp: ScType): Option[ScType] = tp match {
@@ -299,11 +275,12 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
  * level; the internal owner-chain walk prints its `(pre baseType clazz).prefix`
  * climbs and `isMoreNarrow` narrowing decisions one level in — the counterpart of
  * scalac's `matchesPrefixAndClass` steps — and `leave` closes with `= <result>`.
- * `hasRecursiveThisType` decisions (no analog in scalac's `thisTypeAsSeen`) print
- * as `GUARD` lines. Unlike scalac, which walks the finite owner chain once and
- * returns, IntelliJ feeds the substitution output back through the generic
- * `recursiveUpdate` engine, so successive top-level firings show `pre` regrowing
- * (`…analyzer.global.analyzer.global…`) with `GUARD` cutting the regrowth off.
+ * `PROGRESS-BLOCK` lines mark rewrites refused by the progress postcondition
+ * (no analog in scalac's `thisTypeAsSeen`, whose stripping walk cannot
+ * self-embed by construction). Unlike scalac, which walks the finite owner chain
+ * once and returns, IntelliJ feeds the substitution output back through the
+ * generic `recursiveUpdate` engine — PROGRESS and the per-chain CONSUMED rule
+ * are what keep that recirculation at a fixpoint.
  */
 private object ThisTypeSubstitution {
   private def on: Boolean = System.getProperty("scala.asf.trace") != null
@@ -323,50 +300,31 @@ private object ThisTypeSubstitution {
   // ScalaConformance collapse: own designatorSingletonType, then the compound
   // prefix's refinement (`new { val global: Global.this.type } with Analyzer`).
   // Without this, resolution recirculates fresh spellings as new substitutor
-  // targets and paths compound (`analyzer.global.analyzer.global…`) until
-  // hasRecursiveThisType cuts them off — see testScratchInferencerTrace, which
-  // sets scala.asf.nocanon to demonstrate the un-canonicalized behaviour.
+  // targets and paths compound (`analyzer.global.analyzer.global…`) until the
+  // PROGRESS rule cuts them off — see testScratchInferencerTrace, which sets
+  // scala.asf.nocanon to demonstrate the un-canonicalized behaviour.
   // Verified green across the SCL-21947 oracle (OverrideHighlightingTest +
   // TypeSystemTckTest + typeConformance.generated.* + TypeInferenceBugs5Test +
   // Singleton*ConformanceTest); TCK diffs exactly at the pinned Deferred baseline.
-  // NOTE: only the guard's SPELLING-growth role is subsumed; its termination role
-  // (self-embedding: even canonical `Global.this.analyzer.type` contains
-  // `Global.this`) still needs the guard — see testScratchInferencerCanonNoGuard.
+  // NOTE: canonicalization subsumes only the SPELLING-growth channel; termination
+  // of the self-embedding channel (even canonical `Global.this.analyzer.type`
+  // contains `Global.this`) is the PROGRESS rule's job — see
+  // testScratchPumpFixpoint, which disables canon and still fixpoints.
   private def canonOn: Boolean = System.getProperty("scala.asf.nocanon") == null
-  def noGuard: Boolean = System.getProperty("scala.asf.noguard") != null
-  // PROBE (-Dscala.asf.terminal): a rewriting this-substitution's output is terminal
-  // for the remainder of its fused chain (parallel-substitution semantics).
-  // RESULT of forcing this on suite-wide: 591/592 — only TypeInferenceBugs5Test.
-  // testSCL7043 (Enumeration/T#Value overloads, "Cannot resolve expression") fails,
-  // under BOTH variants: blanket-terminal (skip the whole remainder) and the refined
-  // form (skip only subsequent this-substitutions, letting type-param updates
-  // through). So sequential this-composition is load-bearing somewhere legitimate,
-  // and the discriminator between the growth pump and the legitimate case is not
-  // chain position — it is precisely hasRecursiveThisType arm-1's condition
-  // ("target rooted at the this-type being rewritten"). Terminal-output cannot
-  // replace the guard; it gets within ONE counterexample.
-  def terminalOutput: Boolean = System.getProperty("scala.asf.terminal") != null
-  // PROBE (-Dscala.asf.progress): postcondition guard — see the comment on
-  // ThisTypeSubstitution.progressBlocked. Intended to be combined with
-  // -Dscala.asf.noguard to test full replacement of hasRecursiveThisType.
-  def progressMode: Boolean = System.getProperty("scala.asf.progress") != null
-
-  // PROBE (-Dscala.asf.consumed): first-match-wins per this-class within a fused
-  // chain. Once one chain update has MATCHED a this-leaf of class C (identity
-  // counts — scalac's thisTypeAsSeen stops at its first prefix/class match), the
-  // remainder processing that update's output may not rewrite a this-type of C
-  // again. It MAY rewrite this-types of NEW classes the output introduced — the
-  // legitimate sequential composition (SCL-7043: Enumeration.this ->
-  // CE.this.enum.type introduces CE.this for the next update). Without this,
-  // redundant chain elements (followed()-concatenation duplicates; 3224/3230
-  // multi-this-subst chains) RE-NARROW an already-processed this: SCL-7008's
-  // NM.this -> (identity) -> SN.this -> F.this over-rewrite, where scalac stops
-  // at NM.this. Complementary to Progress: Progress blocks self-embedding
-  // (each pump hop introduces a new class, so consumption alone cannot stop it);
-  // consumption blocks redundant re-narrowing (each redundant hop reuses the
-  // same class, so Progress alone cannot stop it).
-  def consumedMode: Boolean = System.getProperty("scala.asf.consumed") != null
-
+  // CONSUMED: first-match-wins per this-class within a fused chain. Once one
+  // chain update has MATCHED a this-leaf of class C on its target's own spine
+  // (identity counts — scalac's thisTypeAsSeen stops at its first prefix/class
+  // match), the remainder processing that update's output may not rewrite a
+  // this-type of C again. It MAY rewrite this-types of NEW classes the output
+  // introduced — the legitimate sequential composition (SCL-7043:
+  // Enumeration.this -> CE.this.enum.type introduces CE.this for the next
+  // update). Without this, redundant chain elements (followed()-concatenation
+  // duplicates; 3224/3230 multi-this-subst chains) RE-NARROW an already-processed
+  // this: SCL-7008's NM.this -> (identity) -> SN.this -> F.this over-rewrite,
+  // where scalac stops at NM.this. Complementary to PROGRESS: Progress blocks
+  // self-embedding (each pump hop introduces a new class, so consumption alone
+  // cannot stop it); consumption blocks redundant re-narrowing (each redundant
+  // hop reuses the same class, so Progress alone cannot stop it).
   private val consumedTL: ThreadLocal[Set[ScTemplateDefinition]] =
     ThreadLocal.withInitial[Set[ScTemplateDefinition]](() => Set.empty)
 
@@ -380,7 +338,7 @@ private object ThisTypeSubstitution {
   def lastFiringConsumes: Boolean = lastConsumesTL.get
 
   def isConsumed(elem: ScTemplateDefinition): Boolean =
-    consumedMode && consumedTL.get.contains(elem)
+    consumedTL.get.contains(elem)
 
   def withConsumed[T](elem: ScTemplateDefinition)(op: => T): T = {
     val saved = consumedTL.get
@@ -419,14 +377,6 @@ private object ThisTypeSubstitution {
       System.err.println(s"${pad}CHAIN-AUDIT[${updates.length} updates, $count this-substs]$dup  applying to: $tp\n$pad   $rendered")
     }
   }
-
-  // Expositional depth-cap guard mode (-Dscala.asf.maxdepth=N): threadlocal nesting
-  // depth of active firings; hasRecursiveThisType blocks purely on depth >= N.
-  private val substDepthTL: ThreadLocal[Int] = ThreadLocal.withInitial[Int](() => 0)
-  def substDepth: Int = substDepthTL.get
-  def depthCapMode: Option[Int] = Option(Integer.getInteger("scala.asf.maxdepth")).map(_.intValue())
-  def pushSubst(): Unit = substDepthTL.set(substDepthTL.get + 1)
-  def popSubst(): Unit = substDepthTL.set(math.max(0, substDepthTL.get - 1))
 
   private def isSingletonLike(t: ScType): Boolean = t match {
     case _: ScThisType      => true
@@ -553,9 +503,4 @@ private object ThisTypeSubstitution {
 
   /** A single step at the current indent (owner-chain climb / narrowing decision). */
   def line(msg: => String): Unit = if (on) System.err.println(s"$pad$msg")
-
-  /** The guard that scalac has no analog for — print both outcomes, flag blocks. */
-  def traceGuard(inst: AnyRef, target: ScType, clazz: ScTemplateDefinition, guarded: Boolean): Unit =
-    if (on) System.err.println(
-      s"${pad}GUARD#${idOf(inst)} hasRecursiveThisType(${clazz.name}.this, pre=$target) = $guarded${if (guarded) "  -> BLOCK" else ""}")
 }
