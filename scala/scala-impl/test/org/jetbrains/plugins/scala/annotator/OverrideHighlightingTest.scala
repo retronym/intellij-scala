@@ -883,4 +883,30 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
       Error("value", "Overriding type Int does not conform to base type String"),
     ): _*)
   }
+
+  // A member of a cake class selected through a singleton path: `x.symbol` with `x: global.ValDef`
+  def testSCL21947ValDefSymbol(): Unit = {
+    val errors = errorsFromScalaCode(
+      """
+        |trait Symbols { self: SymbolTable =>
+        |  class Symbol
+        |}
+        |trait Trees { self: SymbolTable =>
+        |  abstract class Tree { def symbol: Symbol = ??? }
+        |  class ValOrDefDef extends Tree
+        |  class ValDef extends ValOrDefDef
+        |}
+        |abstract class SymbolTable extends Symbols with Trees
+        |class Global extends SymbolTable
+        |
+        |trait HasGlobal {
+        |  val global: Global
+        |  import global._
+        |  val x: global.ValDef = ???
+        |  def foo: Symbol = x.symbol
+        |}
+      """.stripMargin)
+    assertNothing(errors)
+  }
+
 }
