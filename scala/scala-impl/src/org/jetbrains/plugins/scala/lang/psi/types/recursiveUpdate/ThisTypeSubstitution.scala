@@ -26,10 +26,16 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
   //     this-ROOTED PATH still rooted, via inheritance, in the class being
   //     rewritten — no progress => self-embedding => the recirculation fuel of
   //     the growth pump.  See `progressBlocked`.
-  //   CONSUMED  (composition scope, enforced with ScSubstitutor): first
-  //     spine-match per this-class wins within one chain application — scalac's
-  //     one-thisTypeAsSeen-walk-per-occurrence discipline.  See `isConsumed` /
-  //     `noteConsumes` and ScSubstitutor.recursiveUpdateImpl.
+  //   CONSUMED  (composition scope, enforced with ScSubstitutor): once one chain
+  //     element has spine-matched a this-class, later elements may not re-NARROW
+  //     it to another THIS-type — scalac's first-match discipline (SCL-7008's
+  //     NM.this -> SN.this -> F.this over-rewrite).  A this->PATH re-anchor still
+  //     fires: paths are strictly more concrete, and a declaration-side hop's
+  //     identity answer must not starve the use-site element carrying the real
+  //     anchor (the scala/scala Trees cake: [ValDef.this sfc=Tree] derives
+  //     Trees.this identity, then [pre.global.type sfc=Trees] must still
+  //     re-anchor Trees.this).  See `isConsumed` / `noteConsumes` and
+  //     ScSubstitutor.recursiveUpdateImpl.
   //
   // Versus the old guard: O(output spine) + one inheritance test per firing
   // instead of an O(type-size) target scan; blocks the cross-symbol pump the
@@ -37,12 +43,17 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
   // needs no object carve-out (an object-rooted return has a projection root, so
   // PROGRESS admits it by construction — the SCL-18532/SCL-3654 tension retires).
   override protected val subst: PartialFunction[LeafType, ScType] = {
-    case th: ScThisType if !ThisTypeSubstitution.isConsumed(th.element) =>
+    case th: ScThisType =>
       ThisTypeSubstitution.enter(s"thisTypeAsSeen($th)#${ThisTypeSubstitution.idOf(this)}  [pre=$target, seenFromClass=${ThisTypeSubstitution.nameOf(seenFromClass)}]")
       val res0 = doUpdateThisTypeFromClass(th, target, seenFromClass)
       val res =
         if ((res0 ne th) && progressBlocked(res0, th)) {
           ThisTypeSubstitution.line(s"PROGRESS-BLOCK: root of $res0 still denotes ${th.element.name}.this  -> keep $th")
+          ThisTypeSubstitution.noteConsumes(false)
+          th
+        }
+        else if (res0.isInstanceOf[ScThisType] && ThisTypeSubstitution.isConsumed(th.element)) {
+          ThisTypeSubstitution.line(s"CONSUMED: keep $th (this->this re-spelling suppressed)")
           ThisTypeSubstitution.noteConsumes(false)
           th
         }

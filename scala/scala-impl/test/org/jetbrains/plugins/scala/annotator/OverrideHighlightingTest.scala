@@ -1094,6 +1094,41 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     }
   }
 
+  // REGRESSION (real scala/scala sources, post guard-retirement): x.symbol where
+  // x: global.ValDef and ValDef is declared in trait Trees { self: SymbolTable => }
+  // with Symbol coming from a SIBLING cake slice via the self-type — the member's
+  // this-type must re-anchor through the val-path (Trees.this -> global.type).
+  def testScratchNscValDefSymbol(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    try doTestScratchNscValDefSymbol()
+    finally System.clearProperty("scala.asf.trace")
+  }
+
+  private def doTestScratchNscValDefSymbol(): Unit = {
+    val errors = errorsFromScalaCode(
+      """
+        |trait Symbols { self: SymbolTable =>
+        |  class Symbol
+        |}
+        |trait Trees { self: SymbolTable =>
+        |  abstract class Tree { def symbol: Symbol = ??? }
+        |  class ValOrDefDef extends Tree
+        |  class ValDef extends ValOrDefDef
+        |}
+        |abstract class SymbolTable extends Symbols with Trees
+        |class Global extends SymbolTable
+        |
+        |trait HasGlobal {
+        |  val global: Global
+        |  import global._
+        |  val x: global.ValDef = ???
+        |  def foo: Symbol = x.symbol
+        |}
+      """.stripMargin)
+    System.err.println(s"NSC-VALDEF-ERRORS -> ${errors.map(_.toString)}")
+    assertNothing(errors)
+  }
+
   // The growth-pump fixture (SCL-21947 Inferencer shape) under the production
   // PROGRESS + CONSUMED rules, with canonicalize-at-mint DISABLED — the strongest
   // form of the termination claim: even with un-canonicalized doubling spellings
