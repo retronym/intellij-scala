@@ -126,6 +126,7 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
 
   private def doUpdateThisTypeFromClass(thisTp: ScThisType, target: ScType, @Nullable clazz: PsiClass): ScType =
     if (clazz == null) {
+      ThisTypeSubstitution.countNullFiring(this)
       ThisTypeSubstitution.line(s"baseWalk: anchorless  -> narrow against pre=$target")
       doUpdateThisType(thisTp, target)
     }
@@ -547,10 +548,60 @@ private object ThisTypeSubstitution {
     }
   }
 
+  // ── ANCHORLESS-ELIMINATION.md Step 0: census of clazz == null FIRINGS ────────
+  // A null-seenFromClass substitutor that never matches a this-leaf is harmless;
+  // only firings matter. Every 1-arg `ScSubstitutor.apply(tp)` construction site
+  // (the only door into the anchorless mode — recursive calls inside
+  // doUpdateThisTypeFromClass always pass a non-null cursor upward) is recorded
+  // here by identity at construction time, ALWAYS (not gated on scala.asf.trace,
+  // so a plain oracle run is enough to get the real list). The clazz == null
+  // branch above looks the instance up and bumps its site's firing count.
+  // Dump with -Dscala.asf.nullcensus (printed at JVM shutdown).
+  private def censusOn: Boolean = System.getProperty("scala.asf.nullcensus") != null
+
+  private val nullSiteOf: java.util.Map[AnyRef, String] =
+    java.util.Collections.synchronizedMap(new java.util.IdentityHashMap[AnyRef, String]())
+  private val nullFirings: java.util.concurrent.ConcurrentHashMap[String, java.util.concurrent.atomic.LongAdder] =
+    new java.util.concurrent.ConcurrentHashMap()
+
+  private def callSiteOf(inst: AnyRef): String =
+    Thread.currentThread.getStackTrace.iterator
+      .drop(1)
+      .filter { e =>
+        val cn = e.getClassName
+        !cn.startsWith("java.") && !cn.startsWith("jdk.") && !cn.startsWith("scala.") &&
+          !cn.contains("recursiveUpdate")
+      }
+      .take(3)
+      .map(e => s"${e.getClassName.substring(e.getClassName.lastIndexOf('.') + 1)}.${e.getMethodName}:${e.getLineNumber}")
+      .mkString("  <  ")
+
+  def recordNullConstruction(inst: ThisTypeSubstitution): ThisTypeSubstitution = {
+    if (censusOn && inst.seenFromClass == null) nullSiteOf.put(inst, callSiteOf(inst))
+    inst
+  }
+
+  def countNullFiring(inst: ThisTypeSubstitution): Unit = if (censusOn) {
+    val site = Option(nullSiteOf.get(inst)).getOrElse("<unknown site>")
+    nullFirings.computeIfAbsent(site, _ => new java.util.concurrent.atomic.LongAdder()).increment()
+  }
+
+  if (censusOn) {
+    Runtime.getRuntime.addShutdownHook(new Thread(() => dumpNullFiringCensus()))
+  }
+
+  def dumpNullFiringCensus(): Unit = {
+    import scala.jdk.CollectionConverters._
+    val entries = nullFirings.asScala.toSeq.map { case (site, count) => (site, count.sum()) }.sortBy(-_._2)
+    System.err.println(s"=== clazz==null FIRING CENSUS (${entries.size} site(s)) ===")
+    entries.foreach { case (site, count) => System.err.println(f"  $count%8d  $site") }
+  }
+
   /** Log the CONSTRUCTION of a ThisTypeSubstitution: instance id, params, and the
    *  (filtered) call site — so firings with grown targets can be traced back to
    *  whoever built a substitutor out of a previously-substituted type. */
   def traceNew(inst: ThisTypeSubstitution): ThisTypeSubstitution = {
+    recordNullConstruction(inst)
     originHunt(inst)
     if (on) {
       val site = Thread.currentThread.getStackTrace.iterator
