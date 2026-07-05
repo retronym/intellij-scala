@@ -28,9 +28,31 @@ import org.jetbrains.plugins.scala.settings.ScalaProjectSettings
 import scala.annotation.tailrec
 
 object ScExpressionAnnotator extends ElementAnnotator[ScExpression] {
+
+  private val LOG = com.intellij.openapi.diagnostic.Logger.getInstance(
+    "#org.jetbrains.plugins.scala.annotator.element.ScExpressionAnnotator")
+
   override def annotate(element: ScExpression, typeAware: Boolean)
                        (implicit holder: ScalaAnnotationHolder): Unit =
-    annotateImpl(element, typeAware)
+    try annotateImpl(element, typeAware)
+    catch {
+      case e: org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate.RecursiveUpdateOverflowException =>
+        // Diagnostic for the ThisTypeSubstitution cross-symbol pump (see
+        // RecursiveUpdateDepthGuard): pin down WHICH expression's type-check
+        // triggered the runaway substitution, so a real repro can be built from the
+        // file + expression text instead of guessing at synthetic cakes.
+        val file = element.getContainingFile
+        val document = Option(PsiDocumentManager.getInstance(element.getProject).getDocument(file))
+        val offset = element.getTextOffset
+        val line = document.map(_.getLineNumber(offset) + 1).getOrElse(-1)
+        val snippet = element.getText.take(300)
+        LOG.error(
+          s"RecursiveUpdateOverflowException while type-checking expression at " +
+            s"${Option(file).map(_.getName).getOrElse("<unknown file>")}:$line (offset $offset):\n$snippet",
+          e
+        )
+        throw e
+    }
 
   private[annotator] def annotateImpl(element: ScExpression, typeAware: Boolean, fromBlock: Boolean = false)
                                      (implicit holder: ScalaAnnotationHolder): Unit = {
