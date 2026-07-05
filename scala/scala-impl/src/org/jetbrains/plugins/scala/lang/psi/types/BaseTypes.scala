@@ -6,7 +6,7 @@ import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScTypeAlias, ScTypeA
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.ScTypeParametersOwner
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTemplateDefinition
 import org.jetbrains.plugins.scala.lang.psi.types.api._
-import org.jetbrains.plugins.scala.lang.psi.types.api.designator.{ScDesignatorType, ScProjectionType, ScThisType}
+import org.jetbrains.plugins.scala.lang.psi.types.api.designator.{DesignatorOwner, ScDesignatorType, ScProjectionType, ScThisType}
 import org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate.ScSubstitutor
 
 import java.util
@@ -218,6 +218,13 @@ private class BaseTypesIterator(tp: ScType)(implicit context: Context) extends I
             case (Some(ct), None)     => Some(ct)
             case (None, st)           => st
           }
+        case owner: DesignatorOwner =>
+          // A singleton path type (e.g. `x.type` for `x: ValDef`) is not itself a
+          // class/object designator, so ClassType never fires for it. Widen to the
+          // declared/resolved type of the underlying value (scalac's `underlying`,
+          // used by SingleType.baseTypeSeq) so its base classes (e.g. ValDef ->
+          // ValOrDefDef -> Tree) are reachable through the singleton prefix.
+          owner.designatorSingletonType
         case tpt: TypeParameterType =>
           Some(tpt.upperType)
         case ScExistentialArgument(_, Nil, _, upper) =>
