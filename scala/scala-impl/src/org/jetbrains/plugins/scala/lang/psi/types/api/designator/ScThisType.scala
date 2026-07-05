@@ -38,7 +38,7 @@ final case class ScThisType(override val element: ScTemplateDefinition) extends 
       case (_, p@ScProjectionType(tp, elem: ScTypedDefinition)) if elem.isStable =>
         elem.`type`() match {
           case Right(singleton: DesignatorOwner) if singleton.isSingleton =>
-            val newSubst = p.actualSubst.followed(ScSubstitutor(tp))
+            val newSubst = p.actualSubst.followed(ScSubstitutor(tp, ScSubstitutor.declarationAnchor(elem)))
             this.equiv(newSubst(singleton), constraints, falseUndef)
           // Cake-pattern stable path: `pre.global` where `global: Global` (not singleton-typed)
           // but `Global.this` and `pre.global` denote the same instance when the val's type
