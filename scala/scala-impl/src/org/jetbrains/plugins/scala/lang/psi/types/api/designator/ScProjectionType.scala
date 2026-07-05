@@ -78,17 +78,17 @@ final class ScProjectionType private(val projected: ScType,
       projected match {
         case ScDesignatorType(clazz: PsiClass)
           if elementClazz.exists(ScEquivalenceUtil.areClassesEquivalent(_, clazz)) =>
-          return Some(element, ScSubstitutor(projected))
+          return Some(element, ScSubstitutor(projected, clazz))
         case p @ ParameterizedType(ScDesignatorType(clazz: PsiClass), _)
           if elementClazz.exists(ScEquivalenceUtil.areClassesEquivalent(_, clazz)) =>
-          return Some(element, ScSubstitutor(projected).followed(p.substitutor))
+          return Some(element, ScSubstitutor(projected, clazz).followed(p.substitutor))
         case p: ScProjectionType =>
           p.actualElement match {
             case `element` if element.is[ScTypeAlias] => //rare case of recursive projection, see SCL-15345
               return Some(element, p.actualSubst)
             case clazz: PsiClass
               if elementClazz.exists(ScEquivalenceUtil.areClassesEquivalent(_, clazz)) =>
-              return Some(element, ScSubstitutor(projected).followed(p.actualSubst))
+              return Some(element, ScSubstitutor(projected, clazz).followed(p.actualSubst))
             case _ => //continue with processor :(
           }
         case ScThisType(clazz)

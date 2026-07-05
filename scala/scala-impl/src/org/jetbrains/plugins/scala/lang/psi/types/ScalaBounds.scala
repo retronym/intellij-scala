@@ -172,8 +172,16 @@ trait ScalaBounds extends api.Bounds {
     }
 
     def getSuperClasses: Seq[ClassLike] = {
+      // asSeenFrom anchor for this class's OWN superTypes list is the class itself
+      // (scalac's `sym.info.asSeenFrom(pre, sym)`, not `sym.owner` as for a member) -
+      // getNamedElement IS the class whose supertypes are being viewed, except when
+      // it's a type-alias/type-param, which anchors at its declaring class instead.
+      val anchor: PsiClass = getNamedElement match {
+        case cls: PsiClass => cls
+        case other         => ScSubstitutor.declarationAnchor(other)
+      }
       val subst = this.projectionOption match {
-        case Some(proj) => ScSubstitutor(proj)
+        case Some(proj) => ScSubstitutor(proj, anchor)
         case None => ScSubstitutor.empty
       }
       (getNamedElement match {
