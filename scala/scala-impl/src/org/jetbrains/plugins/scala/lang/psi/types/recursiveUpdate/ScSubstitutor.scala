@@ -1,10 +1,12 @@
 package org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate
 
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.psi.PsiClass
-import org.jetbrains.plugins.scala.extensions.ArrayExt
+import com.intellij.psi.{PsiClass, PsiMember, PsiNamedElement}
+import org.jetbrains.plugins.scala.extensions.{ArrayExt, PsiNamedElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.base.types.{ScTypeArgs, ScTypeArgument, ScTypeElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params.{ScParameter, TypeParamId, TypeParamIdOwner}
+import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTemplateDefinition
+import org.jetbrains.plugins.scala.lang.psi.types.api.designator.ScThisType
 import org.jetbrains.plugins.scala.lang.psi.types.Compatibility.Expression
 import org.jetbrains.plugins.scala.lang.psi.types.ScType
 import org.jetbrains.plugins.scala.lang.psi.types.api.{Covariant, TypeParameter, TypeParameterType, UndefinedType, Variance}
@@ -58,7 +60,10 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
     if (cacheSubstitutions)
       cache ++= this.allTypeParamsMap
 
-    recursiveUpdateImpl(`type`)(SubtypeUpdaterNoVariance, Set.empty)
+    ThisTypeSubstitution.auditChain(substitutions, `type`)
+    ThisTypeSubstitution.freshConsumedScope {
+      recursiveUpdateImpl(`type`)(SubtypeUpdaterNoVariance, Set.empty)
+    }
   }
 
   //This method allows application of different `Update` functions in a single pass (see ScSubstitutor).
@@ -76,7 +81,31 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
 
       currentUpdate(scType, variance) match {
         case ReplaceWith(res) =>
-          next.recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
+          currentUpdate match {
+            case tts: ThisTypeSubstitution if res ne scType =>
+              // position [k/n]: n == 1 -> bare substitutor; k < n -> output fed to the rest of the fused chain
+              ThisTypeSubstitution.traceRewrite(tts, scType, res, fromIndex + 1, substitutions.length)
+            case _ =>
+          }
+          // The CONSUMED rule: a this-leaf matched by this update ON ITS TARGET'S SPINE
+          // (identity included) is consumed for its class — the remainder processing of
+          // `res` may not rewrite a this-type of the same class again (first-match-wins,
+          // as in scalac's thisTypeAsSeen), though it may rewrite this-types of NEW
+          // classes `res` introduced (the legitimate sequential composition, SCL-7043).
+          // A match reached only through the enclosing-this escape climb does NOT
+          // consume (lastFiringConsumes = false) — scalac's unmatched case, where a
+          // later hop must still apply. See ThisTypeSubstitution.
+          val consumedClass: ScTemplateDefinition = currentUpdate match {
+            case _: ThisTypeSubstitution if ThisTypeSubstitution.lastFiringConsumes =>
+              scType match {
+                case th: ScThisType => th.element
+                case _              => null
+              }
+            case _ => null
+          }
+          if (consumedClass != null)
+            continueConsumed(consumedClass, res, variance, isLazySubtype)(subtypeUpdater, visited)
+          else next.recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
         case Stop => scType
         case ProcessSubtypes =>
           val newVisited = if (isLazySubtype) visited + scType else visited
@@ -91,6 +120,14 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
       }
     }
   }
+
+  // Out-of-line so recursiveUpdateImpl's own tail call stays a tail call.
+  private def continueConsumed(consumedClass: ScTemplateDefinition, res: ScType,
+                               variance: Variance, isLazySubtype: Boolean)
+                              (subtypeUpdater: SubtypeUpdater, visited: Set[ScType]): ScType =
+    ThisTypeSubstitution.withConsumed(consumedClass) {
+      next.recursiveUpdateImpl(res, variance, isLazySubtype)(subtypeUpdater, visited)
+    }
 
   def followed(other: ScSubstitutor): ScSubstitutor = {
     assertFullSubstitutor()
@@ -201,10 +238,20 @@ object ScSubstitutor {
   }
 
   def apply(updateThisType: ScType): ScSubstitutor =
-    ScSubstitutor(ThisTypeSubstitution(updateThisType, null))
+    ScSubstitutor(ThisTypeSubstitution.traceNew(ThisTypeSubstitution(ThisTypeSubstitution.canonicalizeTarget(updateThisType), null)))
 
   def apply(updateThisType: ScType, seenFromClass: PsiClass): ScSubstitutor =
-    ScSubstitutor(ThisTypeSubstitution(updateThisType, seenFromClass))
+    ScSubstitutor(ThisTypeSubstitution.traceNew(ThisTypeSubstitution(ThisTypeSubstitution.canonicalizeTarget(updateThisType), seenFromClass)))
+
+  /** The declaration-site anchor for an asSeenFrom-style this-substitution over
+   *  `member`'s type: the class containing `member`'s name context — scalac's
+   *  `sym.owner` in `sym.info.asSeenFrom(pre, sym.owner)`. Null when there is no
+   *  containing class (top-level / synthetic / local), which degrades to the
+   *  legacy anchorless `isMoreNarrow` walk in [[ThisTypeSubstitution]]. */
+  def declarationAnchor(member: PsiNamedElement): PsiClass = member.nameContext match {
+    case m: PsiMember => m.getContainingClass
+    case _            => null
+  }
 
   def paramToExprType(parameters: Seq[Parameter], expressions: Seq[Expression], useExpected: Boolean = true): ScSubstitutor =
     ScSubstitutor(ParamsToExprs(parameters, expressions, useExpected))

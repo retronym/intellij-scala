@@ -32,6 +32,796 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
     assertNothing(errorsFromScalaCode(code))
   }
 
+  // SCL-21947 (whittled from the scala/scala reflect Universe cake): the override's
+  // param/return is `SymbolTable.this.RefinedType` (internal.Types is self: SymbolTable,
+  // so `this` is the self type), while the inherited abstract member's, substituted,
+  // is `Types.this.RefinedType`. These denote the same instance (SymbolTable extends
+  // Types and Types's self type is SymbolTable), so ScThisType equivalence must treat
+  // them as equal — otherwise "unapply overrides nothing". scalac accepts the code.
+  def testSCL21947Cake(): Unit = {
+    val code =
+      """
+        |package api {
+        |  trait Types { self: Universe =>
+        |    type Type
+        |    type RefinedType
+        |    abstract class RefinedTypeExtractor {
+        |      def unapply(tpe: RefinedType): Type
+        |    }
+        |  }
+        |  abstract class Universe extends Types
+        |}
+        |package internal {
+        |  trait Types extends api.Types { self: SymbolTable =>
+        |    abstract class Type
+        |    abstract class RefinedType extends RefinedTypeExtractor {
+        |      override def unapply(tpe: RefinedType): Type
+        |    }
+        |  }
+        |  abstract class SymbolTable extends api.Universe with Types
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, second shape (scala/scala internal.Types LazyType.complete): the
+  // overridden member's path-dependent param `Symbol` comes from a SIBLING trait
+  // reached via the self type. `complete` is concrete in `Type` and abstract-
+  // overridden in `LazyType extends Type`; both params are `SymbolTable.this.Symbol`.
+  // scalac accepts it; IntelliJ reported "complete overrides nothing".
+  def testSCL21947Complete(): Unit = {
+    val code =
+      """
+        |package internal {
+        |  trait Symbols { self: SymbolTable => type Symbol }
+        |  trait Types { self: SymbolTable =>
+        |    abstract class Type {
+        |      def complete(sym: Symbol): Unit = ()
+        |    }
+        |    abstract class LazyType extends Type {
+        |      override def complete(sym: Symbol): Unit
+        |    }
+        |  }
+        |  abstract class SymbolTable extends Symbols with Types
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // An abstract member re-abstracting a CONCRETE inherited member in a nested
+  // class. scalac accepts it; IntelliJ reported "f overrides nothing" because the
+  // member table keeps the concrete super as the slot's primary node, and plain
+  // superSignatures (unlike superSignaturesIncludingSelfType) lacked the by-signature
+  // fallback. Not path-dependent — the root of the LazyType.complete report above.
+  def testReabstractNested(): Unit = {
+    val code =
+      """
+        |trait Holder {
+        |  abstract class A { def f(x: Int): Unit = () }
+        |  abstract class B extends A { override def f(x: Int): Unit }
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, third shape (scala/scala Infer.inferTypedPattern). The receiver
+  // `typer` is the global `object typer extends analyzer.Typer`, reached via the
+  // abstract `val global: Global`. Calling `typer.applyTypeToWildcards(pattp)`,
+  // IntelliJ computes the param type as seen through that singleton receiver as
+  // `global.analyzer.global.analyzer.global.Type` (never collapsing the
+  // `analyzer.global: Global.this.type` singleton path back to `global`, and
+  // re-applying the rewrite twice), then reports a false type mismatch against the
+  // argument `global.Type`. scalac accepts it.
+  def testSCL21947Inferencer(): Unit = {
+    val code =
+      """
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |  abstract class Typer {
+        |    def applyTypeToWildcards(tp: Type): Type = tp
+        |  }
+        |}
+        |trait Infer { self: Analyzer =>
+        |  import global._
+        |  class Inferencer {
+        |    def inferTypedPattern(pattp: Type): Type =
+        |      typer.applyTypeToWildcards(pattp)
+        |  }
+        |}
+        |trait Analyzer extends Typers with Infer {
+        |  val global: Global
+        |}
+        |class Global {
+        |  type Type
+        |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+        |  object typer extends analyzer.Typer
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // asSeenFrom trace of the Inferencer shape — the IntelliJ counterpart of
+  // scala/scala's `AsSeenFromTest.inferencer` LoggingAsSeenFromMap. Sets
+  // `scala.asf.trace` so `ThisTypeSubstitution` prints its firings (`ASF fire`)
+  // and `hasRecursiveThisType` blocks (`ASF GUARD`) to stderr.
+  //
+  // === What both engines compute ===
+  //
+  // The parameter type of `applyTypeToWildcards` (declared `Typers.this.global.Type`)
+  // as seen through the receiver `typer`, reached via the abstract `val global`, i.e.
+  // asSeenFrom prefix `Analyzer.this.global.typer.type`, class `Typer`.
+  //
+  // === scalac (AsSeenFromMap.thisTypeAsSeen) — one pass, owner-chain walk, stops ===
+  //
+  //   apply((tp): Typers.this.global.Type : MethodType)
+  //     apply(Typers.this.global.Type : AbstractNoArgsTypeRef)
+  //       apply(Typers.this.global.type : UniqueSingleType)
+  //         apply(Typers.this.type : UniqueThisType)
+  //           thisTypeAsSeen(Typers.this.type)
+  //             matchesPrefixAndClass(pre=…global.typer.type, class=Typer)(candidate=Typers) = false
+  //             matchesPrefixAndClass(pre=…global.analyzer.type, class=Typers)(candidate=Typers) = true
+  //           = Analyzer.this.global.analyzer.type
+  //         = Analyzer.this.global.analyzer.type
+  //       = Analyzer.this.global.analyzer.global.type
+  //     = Analyzer.this.global.analyzer.global.Type
+  //   = (tp: Analyzer.this.global.analyzer.global.Type): Analyzer.this.global.analyzer.global.Type
+  //   RESULT param type = Analyzer.this.global.analyzer.global.Type   // ONE analyzer.global. Done.
+  //
+  // `thisTypeAsSeen`'s loop climbs the symbol OWNER chain (`clazz -> clazz.owner`),
+  // taking `(pre baseType clazz).prefix` at each step, and returns the moment
+  // `matchesPrefixAndClass` succeeds. It never re-applies itself to its own output —
+  // the recursion is over a finite, acyclic owner chain, so there is nothing to guard.
+  //
+  // === IntelliJ (ThisTypeSubstitution over the generic recursiveUpdate engine) ===
+  //
+  // Same indented idiom (thisTypeAsSeen opens a level; the owner-chain climb and the
+  // isMoreNarrow narrowing decisions nest one deeper; `= result` closes; GUARD is the
+  // brake that has no scalac analog). A clean firing mirrors scalac's owner walk:
+  //
+  //   thisTypeAsSeen(Typers.this.type)  [pre=…global.typer.type, seenFromClass=Typer]
+  //     (pre baseType Typer).prefix = …global.analyzer.type  -> climb owner to Typers
+  //     baseWalk: clazz=Typers terminal  -> narrow against pre=…global.analyzer.type
+  //     isMoreNarrow(pre=…global.analyzer.type, Typers.this.type) = true  -> …global.analyzer.type
+  //   = …global.analyzer.type
+  //
+  // The regrowth's true source is NOT the leaf/recursiveUpdate reassembly (swapping
+  // ThisTypeSubstitution to a non-leaf SimpleUpdate changes nothing — measured). It is
+  // that the owner-chain step `(pre baseType clazz)` is a LIVE recompute here, and
+  // `BaseTypes.baseType` itself invokes asSeenFrom. The `baseType(...)` trace bracket
+  // makes it patent — the nested firings are inside the base-type computation, and `pre`
+  // is already growing there:
+  //
+  //   thisTypeAsSeen(Typers.this.type)  [pre=…global.typer.type, seenFromClass=Typer]
+  //     baseType(pre=…global.typer.type, Typer)  [scalac: cached BaseTypeSeq lookup, no re-entry | IntelliJ: live recompute, re-enters asSeenFrom ↓]
+  //       thisTypeAsSeen(Global.this.type)  [pre=…global.type, seenFromClass=Global]        ← RE-ENTRY
+  //         ...
+  //       thisTypeAsSeen(Global.this.type)  [pre=…global.analyzer.type]                     ← pre already grew
+  //         ...
+  //     = Some(…global.analyzer.Typer)                                                      ← baseType result
+  //     (pre baseType Typer).prefix = …global.analyzer.type  -> climb owner to Typers
+  //   = …global.analyzer.type
+  //
+  // Across the whole computation `pre` runs `analyzer.type` -> `analyzer.global.analyzer.type`
+  // -> `analyzer.global.analyzer.global.analyzer.global.type` — the doubling the SCL-21947
+  // fix commit describes — with GUARD (`hasRecursiveThisType = true -> BLOCK`) the only
+  // thing halting it.
+  //
+  // === Why the guard exists here but not in scalac ===
+  //
+  // scalac's `thisTypeAsSeen` climbs the same owner chain, but its `(pre baseType clazz)` is
+  // a CACHED `BaseTypeSeq` array lookup — inert data, it never re-enters the map. So the walk
+  // is over a finite owner chain and returns once `matchesPrefixAndClass` succeeds; there is
+  // nothing to guard. IntelliJ's `BaseTypes.baseType` is an UNCACHED recompute that re-invokes
+  // asSeenFrom, so each level re-anchors a `this` inside a `pre` that already embeds `…analyzer`,
+  // accreting another `analyzer.global`. `hasRecursiveThisType` (the `GUARD` lines) is the
+  // emergency brake over that re-entry; remove it and this exact shape StackOverflows. The
+  // principled fix that would retire it is a cached, closed-form `baseType` feeding the
+  // owner-chain walk (à la scalac's `(pre baseType clazz).prefix` over a cached seq), so the
+  // step is inert data and the walk cannot re-enter asSeenFrom.
+  def testScratchInferencerTrace(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    System.setProperty("scala.asf.origin", "analyzer\\.global") // one-shot stack at first doubled target
+    System.setProperty("scala.asf.nocanon", "true") // canonicalize-at-mint is ON by default; disable so this
+                                                    // test still demonstrates the un-canonicalized doubling
+    try errorsFromScalaCode(
+      """
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
+        |}
+        |trait Infer { self: Analyzer =>
+        |  import global._
+        |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
+        |}
+        |trait Analyzer extends Typers with Infer { val global: Global }
+        |class Global {
+        |  type Type
+        |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+        |  object typer extends analyzer.Typer
+        |}
+      """.stripMargin)
+    finally {
+      System.clearProperty("scala.asf.trace")
+      System.clearProperty("scala.asf.origin")
+      System.clearProperty("scala.asf.nocanon")
+    }
+  }
+
+  // Same fixture under the (now default-on) canonicalize-at-mint: singleton
+  // val-path spellings collapse where projections are re-minted, so no grown
+  // targets are ever constructed (doubling eliminated; deepest spelling equals
+  // scalac's one-hop answer). Traces the CANON collapses.
+  def testScratchInferencerTraceCanon(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |trait Typers { self: Analyzer =>
+          |  import global._
+          |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
+          |}
+          |trait Infer { self: Analyzer =>
+          |  import global._
+          |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
+          |}
+          |trait Analyzer extends Typers with Infer { val global: Global }
+          |class Global {
+          |  type Type
+          |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+          |  object typer extends analyzer.Typer
+          |}
+        """.stripMargin)
+      System.err.println(s"CANON-ERRORS -> ${errors.map(_.toString)}")
+    } finally {
+      System.clearProperty("scala.asf.trace")
+    }
+  }
+
+  def testSCL21947GenBlock(): Unit = {
+    val code =
+      """
+        |trait Gen { val global: Global }
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |  def x: Tree = (null: gen.global.Tree)
+        |  def y: Tree = (null: gen.global.Block)
+        |}
+        |trait Analyzer extends Typers { val global: Global }
+        |class Global {
+        |  class Tree
+        |  class Block extends Tree
+        |  lazy val gen = new { val global: Global.this.type = Global.this } with Gen
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, fifth shape: like GenBlock, but the Block-typed value comes from a
+  // METHOD return (`gen.blk: Block`, as-seen-from `gen`) via an intermediate val,
+  // not a written `gen.global.Block`. The asSeenFrom-computed type must still
+  // collapse `gen.global` to `global` for `temp <: Tree` to hold. scalac accepts it.
+  def testSCL21947GenBlkMethod(): Unit = {
+    val code =
+      """
+        |abstract class TreeGen {
+        |  val global: SymbolTable
+        |  import global._
+        |  def blk: Block = null
+        |}
+        |abstract class SymbolTable {
+        |  class Tree
+        |  class Block extends Tree
+        |  val gen = new TreeGen { val global: SymbolTable.this.type = SymbolTable.this }
+        |}
+        |trait Analyzer { val global: SymbolTable }
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |  val temp = gen.blk
+        |  val tree: Tree = temp
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, sixth shape (scala/scala Typers + Global's `override object gen`):
+  // `gen` is a `val` in SymbolTable, overridden as an `object` in Global with the
+  // early-init `val global: Global.this.type`. Reaching `gen.blk` via `import
+  // global._` binds `gen` to the SymbolTable val (whose refinement is relative to
+  // SymbolTable), so the prefix `gen.global` does not collapse to `global` and
+  // `temp <: Tree` was a false mismatch. scalac accepts it.
+  def testSCL21947GenObject(): Unit = {
+    val code =
+      """
+        |trait IGen {
+        |  val global: SymbolTable
+        |  import global._
+        |  def blk: Block = null
+        |}
+        |trait NscGen extends IGen { val global: Global }
+        |class SymbolTable {
+        |  class Tree
+        |  class Block extends Tree
+        |  val gen = new IGen { val global: SymbolTable.this.type = SymbolTable.this }
+        |}
+        |class Global extends SymbolTable {
+        |  override object gen extends { val global: Global.this.type = Global.this } with NscGen
+        |}
+        |trait Analyzer { val global: Global }
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |  val temp = gen.blk
+        |  val tree: Tree = temp
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, seventh shape (scala/scala nsc ast/TreeGen): the failing conformance
+  // sits INSIDE the nsc `TreeGen` itself (which extends `reflect.internal.TreeGen`),
+  // so `this` is a TreeGen and `gen` (= `global.gen`, an override-object TreeGen),
+  // `Tree`, and `mkAttributedIdent` all come through that TreeGen's `import global._`.
+  // `gen.mkAttributedIdent(null): gen.global.RefTree` must conform to substituteThis's
+  // `to: Tree` (RefTree extends SymTree extends Tree). IntelliJ reported "Required:
+  // Tree, Found: RefTree". scalac accepts it. (The same call in a non-TreeGen context
+  // is already green — this context computes the arg type differently.)
+  //
+  // ROOT CAUSE (fixed): `gen.mkAttributedIdent(null)` resolved to the unanchored
+  // `gen.this.global.gen.global.RefTree` (base `This(gen)`) instead of the receiver
+  // path `NscGen.this.global.gen.global.RefTree`. The re-anchoring substitution
+  // `ScSubstitutor(NscGen.this.global.gen)` was being suppressed by
+  // `ThisTypeSubstitution.hasRecursiveThisType`: the target path contains
+  // `This(NscGen)` and `object gen` inherits `NscGen`, so the inheritor-direction
+  // guard (added for SCL-18532, a runaway-recursion perf fix on the nsc cake) wrongly
+  // treated re-anchoring `This(gen)` as recursive. Object this-types are terminal and
+  // re-anchor exactly once, so that guard no longer fires for objects. With the base
+  // anchored, the existing override-aware singleton collapse finishes the conformance.
+  def testSCL21947TreeGen(): Unit = {
+    val code =
+      """
+        |trait Trees { self: SymbolTable =>
+        |  abstract class Tree { def substituteThis(clazz: AnyRef, to: Tree): Tree = null }
+        |  abstract class SymTree extends Tree
+        |  trait NameTree
+        |  trait RefTree extends SymTree with NameTree
+        |}
+        |class SymbolTable extends Trees {
+        |  val gen = new IGen { val global: SymbolTable.this.type = SymbolTable.this }
+        |}
+        |trait IGen {
+        |  val global: SymbolTable
+        |  import global._
+        |  def mkAttributedIdent(sym: AnyRef): RefTree = null
+        |}
+        |trait NscGen extends IGen {
+        |  val global: Global
+        |  import global._
+        |  def test(tree: Tree): Unit = {
+        |    tree.substituteThis(null, gen.mkAttributedIdent(null))
+        |  }
+        |}
+        |class Global extends SymbolTable {
+        |  override object gen extends { val global: Global.this.type = Global.this } with NscGen
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, eighth shape (scala/scala nsc BrowsingLoaders.enterIfNew): the
+  // path-dependent param `Symbol` is bound through a SINGLETON ALIAS, not a self type.
+  // `SymbolLoaders` declares `val symbolTable: SymbolTable` and `import symbolTable._`,
+  // so the inherited abstract member's param is `symbolTable.Symbol`. The override (via
+  // `import global._`) writes `global.Symbol`. They are the same type only because the
+  // intermediate `GlobalSymbolLoaders` aliases `val symbolTable: global.type = global`,
+  // which scalac collapses (`symbolTable.Symbol =:= global.Symbol`). scalac accepts it.
+  //
+  // ROOT CAUSE (fixed): override matching compares params via EQUIVALENCE, not
+  // conformance. `ScProjectionType.equivInner` sees both projections share element
+  // `Symbol`, so it recurses to the prefixes `symbolTable` =?= `global`. Its singleton
+  // collapse, `checkDesignatorType`, took the prefix designator's RAW declared type
+  // (`actualSubst(td.type())`) — but `td` is the *abstract* `SymbolLoaders.symbolTable:
+  // SymbolTable` (the designator points to the declaration-site symbol; asSeenFrom does
+  // not re-resolve member overrides inside a prefix). `SymbolTable` is not a singleton,
+  // so the collapse bailed and equiv returned Left -> "overrides nothing". Fix: equivInner
+  // now also consults the override-aware `designatorSingletonType`
+  // (`ScProjectionType.overrideSingletonOf`, scalac's `pre.memberType`), which the
+  // conformance side already used. Confirmed by a differential: declaring `symbolTable:
+  // global.type` directly in `SymbolLoaders` (no override) was already green.
+  def testSCL21947BrowsingLoaders(): Unit = {
+    val code =
+      """
+        |trait SymbolTable {
+        |  type Symbol <: Null
+        |}
+        |abstract class SymbolLoaders {
+        |  val symbolTable: SymbolTable
+        |  import symbolTable._
+        |  protected def useSymbol(sym: Symbol): Unit
+        |}
+        |abstract class GlobalSymbolLoaders extends SymbolLoaders {
+        |  val global: SymbolTable
+        |  val symbolTable: global.type = global
+        |}
+        |abstract class BrowsingLoaders extends GlobalSymbolLoaders {
+        |  val global: SymbolTable
+        |  import global._
+        |  override protected def useSymbol(sym: Symbol): Unit
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, ninth shape (scala/scala reflect AnnotationInfos.Annotatable /
+  // Symbols.Symbol). A generic cake trait `Annotatable[Self] { self: Self => def
+  // foo(): Self }` lives in component `AnnotationInfos` (self: SymbolTable); the
+  // sibling component `Symbols` declares `Symbol extends Annotatable[Symbol]`, which
+  // overrides `foo` returning `this.type` (covariant over `Self` = `Symbol`, since
+  // `Symbol.this.type <:< Symbol`). IntelliJ reported "foo overrides nothing".
+  // scalac accepts it.
+  def testSCL21947Annotatable(): Unit = {
+    val code =
+      """
+        |trait AnnotationInfos { self: SymbolTable =>
+        |  trait Annotatable[Self] { self: Self =>
+        |    def foo(): Self
+        |  }
+        |}
+        |trait Symbols { self: SymbolTable =>
+        |  abstract class Symbol extends Annotatable[Symbol] {
+        |    override def foo(): this.type = this
+        |  }
+        |}
+        |trait SymbolTable extends AnnotationInfos with Symbols
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, tenth shape (scala/scala nsc MutableSettings): a refinement placed on
+  // the UPPER BOUND of an abstract type member, refining a member (`type T`) that the
+  // refined component inherits TRANSITIVELY.
+  //
+  //   type Setting        <: SettingValue
+  //   type BooleanSetting <: Setting { type T = Boolean }
+  //
+  // `def value: T` lives in `SettingValue` (where `T` is abstract, from
+  // `AbsSettingValue`). Selecting `.value` on a `BooleanSetting` must read the bound's
+  // `{ type T = Boolean }`, so its type is `BooleanSetting#T` (=:= Boolean) and the
+  // assignment to `Boolean` holds. IntelliJ instead left the prefix as the raw
+  // `SettingValue.this`, yielding the abstract `SettingValue.this.T` — "Expression of
+  // type SettingValue.this.T doesn't conform to expected type Boolean". scalac accepts.
+  //
+  // ROOT CAUSE (fixed): re-anchoring `SettingValue.this` onto the receiver goes through
+  // `ThisTypeSubstitution`, whose `hasSameOrInheritor` scans the compound's components
+  // for `SettingValue`. It widened a component that is a TYPE PARAMETER to its bound but
+  // not one that is an abstract TYPE ALIAS (`type Setting <: SettingValue`), so it never
+  // saw `SettingValue` under `Setting`'s bound and skipped the substitution. The
+  // `BooleanSetting1` form (`Setting with SettingValue { type T = Boolean }`) was already
+  // green because `SettingValue` is then a direct (class) component.
+  def testSCL21947MutableSettings(): Unit = {
+    val code =
+      """
+        |abstract class AbsSettings {
+        |  class AbsSettingValue { type T }
+        |  trait SettingValue extends AbsSettingValue { def value: T }
+        |}
+        |abstract class MutableSettings extends AbsSettings {
+        |  type Setting <: SettingValue
+        |  type BooleanSetting  <: Setting {type T = Boolean}
+        |  type BooleanSetting1 <: Setting with SettingValue {type T = Boolean}
+        |  val viaBound:    Boolean = (??? : BooleanSetting).value
+        |  val viaCompound: Boolean = (??? : BooleanSetting1).value
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, eleventh shape (scala/scala nsc ExplicitOuter.OuterPathTransformer):
+  // selecting an inner class through an OBJECT member reached on a stable val path.
+  //
+  //   class C2 extends global.explicitOuter.OuterPathTransformer(null: global.analyzer.Typer)
+  //
+  // `OuterPathTransformer`'s ctor param is `analyzer.Typer` = `ExplicitOuter.this.global.
+  // analyzer.Typer`. As-seen-from the receiver `global.explicitOuter`, that must become
+  // `global.explicitOuter.global.analyzer.Typer` and then collapse (`explicitOuter.global
+  // =:= global`) to `global.analyzer.Typer` — matching the argument. scalac accepts it.
+  //
+  // ROOT CAUSE (fixed): resolving the qualifier `global` (a stable val) recorded its
+  // `fromType` as the WIDENED declared type `Global`, not the singleton path
+  // `Repro.this.global.type`. So the next selection — the OBJECT `explicitOuter` — was
+  // projected as `Global#explicitOuter` (dropping the instance prefix) in
+  // `ScStableCodeReferenceImpl.processQualifierResolveResult`. The ctor's substitutor then
+  // re-anchored `ExplicitOuter.this` onto `Global#explicitOuter`, yielding the un-collapsible
+  // `Global#explicitOuter.global.analyzer.Typer` -> false "type mismatch". Fix: for a stable
+  // qualifier, record the singleton path as `fromType` (member lookup still runs over the
+  // widened type), so the object selection keeps the path and asSeenFrom collapses it.
+  def testSCL21947OuterPathTransformer(): Unit = {
+    val code =
+      """
+        |trait Symbols { self: SymbolTable =>
+        |  class Symbol
+        |}
+        |trait Trees { self: SymbolTable =>
+        |  abstract class AstTransformer {
+        |    def currentClass: Symbol = ???
+        |  }
+        |}
+        |abstract class SymbolTable extends Symbols with Trees
+        |trait Typers { self: Analyzer =>
+        |  class Typer
+        |}
+        |trait Analyzer extends Typers {
+        |  val global: Global
+        |}
+        |trait TypingTransformers {
+        |  val global: Global
+        |  import global._
+        |  protected def newRootLocalTyper(unit: CompilationUnit): global.analyzer.Typer = ???
+        |  abstract class TypingTransformer(initLocalTyper: global.analyzer.Typer) extends global.AstTransformer {
+        |    def this(unit: CompilationUnit) = this(newRootLocalTyper(unit))
+        |  }
+        |}
+        |trait ExplicitOuter extends TypingTransformers {
+        |  import global._
+        |  abstract class OuterPathTransformer(initLocalTyper: analyzer.Typer) extends TypingTransformer(initLocalTyper)
+        |}
+        |abstract class Global extends SymbolTable {
+        |  class CompilationUnit
+        |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+        |  object explicitOuter extends { val global: Global.this.type = Global.this } with ExplicitOuter
+        |}
+        |abstract class SubComponent {
+        |  val global: Global
+        |}
+        |abstract class Repro extends SubComponent {
+        |  abstract class C2
+        |    extends global.explicitOuter.OuterPathTransformer(null: global.analyzer.Typer)
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947, twelfth shape: abstract type member `type Symbol >: Null` overridden
+  // by `class Symbol { def foo = 42 }`. Selecting `.foo` on `currentClass` (whose
+  // result type is the abstract `Symbol`) must resolve through the overriding class
+  // member, mirroring scalac's `pre.memberType(sym)`.
+  def testSCL21947AbstractTypeMemberOverriddenByClass(): Unit = {
+    val code =
+      """
+        |trait Symbols { self: SymbolTable =>
+        |  class Symbol { def foo = 42 }
+        |}
+        |trait ApiUniverse extends ApiTrees {
+        |  type Symbol >: Null
+        |}
+        |trait ApiTrees { self: ApiUniverse =>
+        |  abstract class ApiTransformer {
+        |    def currentClass: Symbol = ???
+        |  }
+        |}
+        |trait Trees { self: SymbolTable =>
+        |  abstract class AstTransformer extends ApiTransformer
+        |}
+        |abstract class SymbolTable extends Symbols with Trees with ApiUniverse
+        |trait Typers { self: Analyzer =>
+        |  class Typer
+        |}
+        |trait Analyzer extends Typers {
+        |  val global: Global
+        |}
+        |trait TypingTransformers {
+        |  val global: Global
+        |  import global._
+        |  protected def newRootLocalTyper(unit: CompilationUnit): global.analyzer.Typer = ???
+        |  abstract class TypingTransformer(initLocalTyper: global.analyzer.Typer) extends global.AstTransformer {
+        |    def this(unit: CompilationUnit) = this(newRootLocalTyper(unit))
+        |  }
+        |}
+        |trait ExplicitOuter extends TypingTransformers {
+        |  import global._
+        |  abstract class OuterPathTransformer(initLocalTyper: analyzer.Typer) extends TypingTransformer(initLocalTyper)
+        |}
+        |abstract class Global extends SymbolTable {
+        |  class CompilationUnit
+        |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+        |  object explicitOuter extends { val global: Global.this.type = Global.this } with ExplicitOuter
+        |}
+        |abstract class SubComponent {
+        |  val global: Global
+        |}
+        |abstract class Repro extends SubComponent with TypingTransformers {
+        |  import global._
+        |  abstract class C2
+        |    extends global.explicitOuter.OuterPathTransformer(null: global.analyzer.Typer) {
+        |    val x: Symbol = currentClass
+        |    x.foo
+        |    currentClass.foo
+        |  }
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // SCL-21947: override of a method whose parameter/return types are abstract type
+  // members (Symbol, Tree) from ApiUniverse, inherited through the cake pattern.
+  // The override check must resolve the super method's signature types through the
+  // correct prefix (scalac's asSeenFrom on memberType).
+  def testSCL21947OverrideWithAbstractTypeMembers(): Unit = {
+    val code =
+      """
+        |trait Symbols { self: SymbolTable =>
+        |  class Symbol { def foo = 42 }
+        |}
+        |trait ApiUniverse extends ApiTrees {
+        |  type Symbol >: Null
+        |  type Tree >: Null
+        |}
+        |trait ApiTrees { self: ApiUniverse =>
+        |  abstract class ApiTransformer {
+        |    def transformStats(stats: List[Tree], exprOwner: Symbol): List[Tree]
+        |  }
+        |}
+        |trait Trees { self: SymbolTable =>
+        |  abstract class AstTransformer extends ApiTransformer {
+        |    def m1(a: Symbol): Symbol
+        |  }
+        |}
+        |abstract class SymbolTable extends Symbols with Trees with ApiUniverse
+        |trait Typers { self: Analyzer =>
+        |  class Typer
+        |}
+        |trait Analyzer extends Typers {
+        |  val global: Global
+        |}
+        |trait TypingTransformers {
+        |  val global: Global
+        |  import global._
+        |  protected def newRootLocalTyper(unit: CompilationUnit): global.analyzer.Typer = ???
+        |  abstract class TypingTransformer(initLocalTyper: global.analyzer.Typer) extends global.AstTransformer {
+        |    def this(unit: CompilationUnit) = this(newRootLocalTyper(unit))
+        |  }
+        |}
+        |trait ExplicitOuter extends TypingTransformers {
+        |  import global._
+        |  abstract class OuterPathTransformer(initLocalTyper: analyzer.Typer) extends TypingTransformer(initLocalTyper)
+        |}
+        |abstract class Global extends SymbolTable {
+        |  class CompilationUnit
+        |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+        |  object explicitOuter extends { val global: Global.this.type = Global.this } with ExplicitOuter
+        |}
+        |abstract class SubComponent {
+        |  val global: Global
+        |}
+        |abstract class Repro extends SubComponent with TypingTransformers {
+        |  import global._
+        |  abstract class C2
+        |    extends global.explicitOuter.OuterPathTransformer(null: global.analyzer.Typer) {
+        |    override def transformStats(stats: List[Tree], exprOwner: Symbol): List[Tree] = stats
+        |  }
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // All-in-one cake path-dependent probe: the singleton `gen.global` is refined to
+  // `SymbolTable.this.type`, so `gen.blk: gen.global.Block` must collapse to `Block`
+  // (= `global.Block`, `Block <: Tree`) for each dimension below to type-check. scalac accepts
+  // all. Exercises one tricky path-dependent type through: (A) conformance, (B) parameter
+  // applicability, (C) type-parameter inference, (D) implicit-parameter resolution,
+  // (E) implicit conversion / extension method, (F) override matching.
+  def testCakePathDependentAllDimensions(): Unit = {
+    val code =
+      """
+        |trait Trees { self: SymbolTable =>
+        |  class Tree
+        |  class Block extends Tree
+        |}
+        |abstract class SymbolTable extends Trees {
+        |  val gen = new IGen { val global: SymbolTable.this.type = SymbolTable.this }
+        |}
+        |trait IGen {
+        |  val global: SymbolTable
+        |  import global._
+        |  def blk: Block = null
+        |}
+        |trait Analyzer { val global: SymbolTable }
+        |trait Typers { self: Analyzer =>
+        |  import global._
+        |
+        |  // (A) conformance — gen.blk (: gen.global.Block) assigned to Tree
+        |  val a: Tree = gen.blk
+        |
+        |  // (B) parameter applicability — gen.blk as an argument to a Tree parameter
+        |  def takeTree(t: Tree): Unit = ()
+        |  takeTree(gen.blk)
+        |
+        |  // (C) type-parameter inference — A inferred from gen.blk, result required as Tree
+        |  def id[A](x: A): A = x
+        |  val c: Tree = id(gen.blk)
+        |
+        |  // (D) implicit parameter — Show[Tree] satisfied from cake scope
+        |  trait Show[T] { def show(t: T): String }
+        |  implicit val showTree: Show[Tree] = new Show[Tree] { def show(t: Tree) = "" }
+        |  def render[T](t: T)(implicit s: Show[T]): String = s.show(t)
+        |  val d: String = render[Tree](gen.blk)
+        |
+        |  // (E) implicit conversion / extension method — gen.blk.pretty via treeOps: Tree => TreeOps
+        |  class TreeOps(t: Tree) { def pretty: String = "" }
+        |  implicit def treeOps(t: Tree): TreeOps = new TreeOps(t)
+        |  val e: String = gen.blk.pretty
+        |
+        |  // (F) override matching — Tree-typed signature overridden through an anonymous class
+        |  trait Transformer { def transform(t: Tree): Tree }
+        |  val f: Transformer = new Transformer { override def transform(t: Tree): Tree = t }
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // PROBE (self-type this.type, implicit dimension): implicit search keys off the base types
+  // of the target. `render(this)` infers T = AnimalBox.this.type, whose self-type contributes
+  // base `Animal`; the needed `Pretty[Animal]` lives in `Animal`'s companion. scalac accepts.
+  def testProbeSelfTypeThisImplicit(): Unit = {
+    val code =
+      """
+        |trait Pretty[-T] { def s(t: T): String }
+        |class Animal
+        |object Animal { implicit val p: Pretty[Animal] = new Pretty[Animal] { def s(t: Animal) = "" } }
+        |trait AnimalBox { self: Animal =>
+        |  def render[T](t: T)(implicit p: Pretty[T]): String = p.s(t)
+        |  val r: String = render(this)
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // Whittled from the scala/scala reflect cake (internal.Scopes#Scope +
+  // runtime.SynchronizedOps#newScope): `class Scope protected[Scopes] ()` is instantiated as
+  // `new Scope with SynchronizedScope` from `SynchronizedOps`, which is NOT a subclass of the
+  // nested `Scope`. scalac accepts it because `new Scope with SynchronizedScope` defines an
+  // anonymous SUBCLASS of `Scope`, and a protected constructor is reachable as the super-ctor
+  // call from a subclass. IntelliJ reported a false "No constructor accessible from here".
+  //
+  // ROOT CAUSE (fixed): `ResolveUtils.checkProtected` skipped the enclosing `new` template
+  // (jumping to the named outer class, which is not a subclass) whenever it had an empty body —
+  // which wrongly lumped `new Scope() with X` in with the bare `new Scope()` direct
+  // instantiation. The skip now also requires a single parent type, so the `with X` /`{}`
+  // anonymous-subclass forms are recognized as the subclass that grants access.
+  def testProtectedCtorAnonClass(): Unit = {
+    val code =
+      """
+        |trait Scopes { self: SymbolTable =>
+        |  class Scope protected[Scopes] ()
+        |}
+        |trait SymbolTable extends Scopes
+        |trait T
+        |trait SynchronizedOps extends SymbolTable {
+        |  trait SynchronizedScope extends Scope
+        |  def newScope:   Scope = new Scope() with SynchronizedScope // the original cake shape
+        |  def viaMixin:   Scope = new Scope() with T                 // unrelated mixin is enough
+        |  def viaBody:    Scope = new Scope() {}                     // body form (already green)
+        |}
+      """.stripMargin
+    assertNothing(errorsFromScalaCode(code))
+  }
+
+  // Regression guard for the fix above: a *direct* `new Scope()` (single parent, no body) from a
+  // non-subclass is genuinely inaccessible and must still be reported. scalac rejects it too.
+  def testProtectedCtorDirectInstantiation(): Unit = {
+    val code =
+      """
+        |trait Scopes { self: SymbolTable =>
+        |  class Scope protected[Scopes] ()
+        |}
+        |trait SymbolTable extends Scopes
+        |trait SynchronizedOps extends SymbolTable {
+        |  def bad: Scope = new Scope()
+        |}
+      """.stripMargin
+    assertMatches(errorsFromScalaCode(code)) {
+      case Error(_, "No constructor accessible from here") :: Nil =>
+    }
+  }
+
   def testScl13051_2(): Unit = {
     val code =
       s"""
@@ -272,5 +1062,237 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
       Error("class C4(@BeanProperty var value: Int) extends GetterWithSetter", "Class 'C4' must either be declared abstract or implement abstract member 'setValue(foo: String): Unit' in 'Setter'"),
       Error("value", "Overriding type Int does not conform to base type String"),
     ): _*)
+  }
+
+  // Trace of the SCL-7043 chain — the canonical LEGITIMATE sequential composition:
+  // `[update 1/2] Enumeration.this.type -> CE.this.enum.type` introduces CE.this,
+  // which `[update 2/2]` (target=CE.this.enum.type sfc=CE) must then re-anchor.
+  // PROGRESS admits update 1 (its output is rooted at CE.this, and CE AGGREGATES
+  // an Enumeration rather than inheriting one) and CONSUMED does not block update 2
+  // (CE is a NEW class introduced by update 1's output). This was the counterexample
+  // that falsified the terminal-output probe (see git history).
+  def testScratchSCL7043Trace(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |abstract class C[T] {
+          |  def lee : T
+          |}
+          |
+          |class CE[T <: Enumeration](val enum: T) extends C[T#Value] {
+          |  def foo(t: T#Value) = 1
+          |  def foo(s: String) = "text"
+          |
+          |  foo(enum.values.toList(0))
+          |  def lee = enum.values.toList(0)
+          |}
+        """.stripMargin)
+      System.err.println(s"SCL7043-PROD-ERRORS -> ${errors.map(_.toString)}")
+    } finally {
+      System.clearProperty("scala.asf.trace")
+    }
+  }
+
+  // REGRESSION (real scala/scala sources, post guard-retirement): x.symbol where
+  // x: global.ValDef and ValDef is declared in trait Trees { self: SymbolTable => }
+  // with Symbol coming from a SIBLING cake slice via the self-type — the member's
+  // this-type must re-anchor through the val-path (Trees.this -> global.type).
+  def testScratchNscValDefSymbol(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    try doTestScratchNscValDefSymbol()
+    finally System.clearProperty("scala.asf.trace")
+  }
+
+  private def doTestScratchNscValDefSymbol(): Unit = {
+    val errors = errorsFromScalaCode(
+      """
+        |trait Symbols { self: SymbolTable =>
+        |  class Symbol
+        |}
+        |trait Trees { self: SymbolTable =>
+        |  abstract class Tree { def symbol: Symbol = ??? }
+        |  class ValOrDefDef extends Tree
+        |  class ValDef extends ValOrDefDef
+        |}
+        |abstract class SymbolTable extends Symbols with Trees
+        |class Global extends SymbolTable
+        |
+        |trait HasGlobal {
+        |  val global: Global
+        |  import global._
+        |  val x: global.ValDef = ???
+        |  def foo: Symbol = x.symbol
+        |}
+      """.stripMargin)
+    System.err.println(s"NSC-VALDEF-ERRORS -> ${errors.map(_.toString)}")
+    assertNothing(errors)
+  }
+
+  // The growth-pump fixture (SCL-21947 Inferencer shape) under the production
+  // PROGRESS + CONSUMED rules, with canonicalize-at-mint DISABLED — the strongest
+  // form of the termination claim: even with un-canonicalized doubling spellings
+  // recirculating, the progress postcondition alone holds the fixpoint. (The old
+  // hasRecursiveThisType guard is gone; before Progress, this configuration
+  // StackOverflowed.)
+  def testScratchPumpFixpoint(): Unit = {
+    System.setProperty("scala.asf.nocanon", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |trait Typers { self: Analyzer =>
+          |  import global._
+          |  abstract class Typer { def applyTypeToWildcards(tp: Type): Type = tp }
+          |}
+          |trait Infer { self: Analyzer =>
+          |  import global._
+          |  class Inferencer { def inferTypedPattern(pattp: Type): Type = typer.applyTypeToWildcards(pattp) }
+          |}
+          |trait Analyzer extends Typers with Infer { val global: Global }
+          |class Global {
+          |  type Type
+          |  lazy val analyzer = new { val global: Global.this.type = Global.this } with Analyzer
+          |  object typer extends analyzer.Typer
+          |}
+        """.stripMargin)
+      System.err.println(s"PUMP-FIXPOINT-ERRORS -> ${errors.map(_.toString)}")
+      assertNothing(errors)
+    } finally {
+      System.clearProperty("scala.asf.nocanon")
+    }
+  }
+
+  // SCL7008: the shape that motivated the CONSUMED rule — redundant followed()
+  // chain elements would re-narrow an already-matched this (NM.this -> SN.this ->
+  // F.this) where scalac (and the golden) stop at NM.this; first-spine-match-wins
+  // preserves NM.this. Trace of the chain compositions.
+  def testScratchSCL7008Trace(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    try {
+      val errors = errorsFromScalaCode(
+        """
+          |trait SCL7008 {
+          |  trait N { self: F =>
+          |    trait Name
+          |  }
+          |  trait SN { self: F =>
+          |    object nme extends Z {
+          |
+          |    }
+          |  }
+          |  class F extends N with SN with NM
+          |
+          |  trait NM { self: F =>
+          |    trait NMC
+          |    trait Z extends NMC { self: nme.type =>
+          |      def one(name: Name): Name = null
+          |      def two(name: Name) = one(name)
+          |    }
+          |  }
+          |}
+        """.stripMargin)
+      System.err.println(s"SCL7008-ERRORS -> ${errors.map(_.toString)}")
+    } finally {
+      System.clearProperty("scala.asf.trace")
+    }
+  }
+
+  // REGRESSION repro attempt: skeletor-extracted (real, compilable) skeleton of the
+  // scala/scala Infer/Analyzer/Global cake (~/code/minimal/target/runs/cake-compact/
+  // skeleton-probe.scala), with the `Global.analyzer` lazy val (missing from the
+  // skeletor seed set) added back, plus a `crashProbe` member in `Infer` calling
+  // `global.analyzer.formalTypes(...)` — mirrors the live SOE's cycling type
+  // `ScProjectionType(Infer.this.global.type)` and substitutor chain (`Infer.this ->
+  // ... asSeenFrom Global/Analyzer/Infer`, FUSED-SUBST-SCALAC.md's cross-symbol pump).
+  def testScratchSkeletorCakeCrossSymbolPump(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    try {
+      val path = java.nio.file.Paths.get("/Users/jz/code/minimal/target/runs/cake-compact/skeleton-probe.scala")
+      val source = java.nio.file.Files.readString(path)
+      val errors = errorsFromScalaCode(source)
+      System.err.println(s"SKELETOR-CAKE-ERRORS -> ${errors.map(_.toString)}")
+    } finally {
+      System.clearProperty("scala.asf.trace")
+    }
+  }
+
+  // Minimized copy of testScratchSkeletorCakeCrossSymbolPump: only the ingredients
+  // that reproduce the growth pump (see skeleton-minimal.scala's header comment for
+  // the derivation) — Global.analyzer/Global.typer, Analyzer inheriting both Infer
+  // and Typers, and Infer.Inferencer#inferTypedPattern calling
+  // `typer.applyTypeToWildcards(pattp)`. No trace/highlighting noise from the
+  // other ~2400 lines of unrelated compiler cake.
+  //
+  // GOLDEN = exact scalac parity (scalac 2.13 on skeleton-minimal.scala):
+  //   error: type mismatch;
+  //    found   : pattp.type (with underlying type Infer.this.global.Type)
+  //    required: Infer.this.global.analyzer.global.Type
+  // ONE re-anchor round (`.analyzer.global`), no more. Before the anchor-discipline
+  // fix the expected type grew a round per re-derivation
+  // (`…analyzer.global.analyzer.global.Type` after a single batch pass; SOE on real
+  // scala/scala sources) — the cross-symbol pump, see ThisTypeSubstitution's
+  // cursorChainReaches and scalac's AsSeenFromTest.crossSymbolPumpConfirmedInProduction.
+  def testScratchSkeletorCakeCrossSymbolPumpMinimal(): Unit = {
+    val path = java.nio.file.Paths.get("/Users/jz/code/minimal/target/runs/cake-compact/skeleton-minimal.scala")
+    val source = java.nio.file.Files.readString(path)
+    val errors = errorsFromScalaCode(source)
+    System.err.println(s"SKELETOR-CAKE-MINIMAL-ERRORS -> ${errors.map(_.toString)}")
+    assertMatches(errors) {
+      case Error("pattp", "Type mismatch, expected: Infer.this.global.analyzer.global.Type, actual: Infer.this.global.Type") :: Nil =>
+    }
+  }
+
+  // Real-world regression: `global.definitions.AnyTpe: global.Type` was reported as a
+  // false "cannot upcast SymbolTable.this.Type to Typers.this.global.Type" while
+  // manually opening the real scala/scala Typers.scala in the IDE. This fixture is a
+  // skeletor extraction (see the file header) from the ACTUAL compiled scala/scala
+  // classes, seeded at the real Typers/DefinitionsClass/StandardDefinitions - not a
+  // hand-built approximation - self-compile-verified against the real classpath. With
+  // today's anchoring fixes it produces no error on the ascription; only unrelated
+  // skeleton noise (missing project settings: literal-types flag, stubbed AnyRefMap)
+  // survives, which this test explicitly tolerates.
+  def testSkeletorDefinitionsAnyTpeAscription(): Unit = {
+    val path = java.nio.file.Paths.get(org.jetbrains.plugins.scala.util.TestUtils.getTestDataPath, "annotator", "anyTpeSkeletonCake", "skeleton.scala")
+    val source = java.nio.file.Files.readString(path)
+    val errors = errorsFromScalaCode(source)
+    val upcastOrMismatch = errors.filter(e => e.message.contains("upcast") || e.message.contains("Type mismatch"))
+    assertMatches(upcastOrMismatch) {
+      case Nil =>
+    }
+  }
+
+  // Regression (hand-minimized from the AnyTpe report above): the INFERRED result type
+  // of `foo` is `SymbolTable.this.Type`, and `foo`'s owner is `Definitions` (a PROPER
+  // superclass of `SymbolTable` via `SymbolTable extends Definitions`). Re-anchoring
+  // that this-type at `g.foo` (prefix `g.type`, `g: Global`) must yield `g.Type`:
+  // scalac's `toPrefix` short-circuits because `SymbolTable <: Definitions` and
+  // `Global <: SymbolTable`. IntelliJ used to lack that first-branch check in
+  // ThisTypeSubstitution.doUpdateThisTypeFromClass and instead walked `Definitions`'s
+  // owner chain up to the enclosing `object repro`, fell off as UNMATCHED, and kept the
+  // raw `SymbolTable.this.Type` — a false "Cannot upcast SymbolTable.this.Type to
+  // g.Type". (The bug is in the re-anchoring toPrefix analog, NOT in BaseTypes.baseType,
+  // whose `repro`-prefixed result is scalac-correct and simply never consulted here.)
+  def testInferredMemberTypeAnchor(): Unit = {
+    val source =
+      """object repro {
+        |  trait Definitions {
+        |    self: SymbolTable =>
+        |    def foo = NoSymbol.tpe
+        |  }
+        |  trait SymbolTable extends Definitions {
+        |    abstract class Symbol { def tpe: Type = ??? }
+        |    object NoSymbol extends Symbol
+        |    abstract class Type
+        |  }
+        |  trait Global extends SymbolTable
+        |
+        |  val g: Global = ???
+        |  g.foo: g.Type
+        |}
+        |""".stripMargin
+    val errors = errorsFromScalaCode(source)
+    assertMatches(errors) {
+      case Nil =>
+    }
   }
 }

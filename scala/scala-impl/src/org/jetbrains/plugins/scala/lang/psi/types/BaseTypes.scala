@@ -3,13 +3,14 @@ package org.jetbrains.plugins.scala.lang.psi.types
 import com.intellij.psi.PsiClass
 import org.jetbrains.plugins.scala.extensions.PsiTypeExt
 import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScTypeAlias, ScTypeAliasDefinition}
+import org.jetbrains.plugins.scala.lang.psi.api.toplevel.ScTypeParametersOwner
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTemplateDefinition
 import org.jetbrains.plugins.scala.lang.psi.types.api._
-import org.jetbrains.plugins.scala.lang.psi.types.api.designator.{ScDesignatorType, ScProjectionType, ScThisType}
+import org.jetbrains.plugins.scala.lang.psi.types.api.designator.{DesignatorOwner, ScDesignatorType, ScProjectionType, ScThisType}
 import org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate.ScSubstitutor
 
 import java.util
-import scala.annotation.{nowarn, tailrec}
+import scala.annotation.tailrec
 import scala.collection.mutable
 
 object BaseTypes {
@@ -18,26 +19,89 @@ object BaseTypes {
 
   def get(t: ScType)(implicit context: Context): Seq[ScType] = reduce(iterator(t).toList)
 
-  private def reduce(types: Seq[ScType])(implicit context: Context): Seq[ScType] = {
-    val res = new mutable.HashMap[PsiClass, ScType]
-    @nowarn("cat=deprecation")
-    object all extends mutable.HashMap[PsiClass, mutable.Set[ScType]] with mutable.MultiMap[PsiClass, ScType]
-    val iterator = types.iterator
-    while (iterator.hasNext) {
-       val t = iterator.next()
-      t.extractClass match {
-        case Some(c) =>
-          val isBest = all.get(c) match {
-            case None => true
-            case Some(ts) => !ts.exists(t.conforms(_))
-          }
-          if (isBest) res += ((c, t))
-          all.addBinding(c, t)
-        case None => //not a class type
-      }
-    }
-    res.values.toList
+  /**
+   * The base type of `t` at class `clazz`, with same-symbol contributions merged —
+   * the analogue of scalac's `t baseType clazz` (used by `AsSeenFromMap`). When `t`
+   * reaches `clazz` through several parents with different arguments/prefixes, the
+   * contributions are combined with `glb`, which performs scalac's variance-aware
+   * `mergePrefixAndArgs` (covariant -> glb of args, contravariant -> lub). This is
+   * deterministic, unlike `iterator(t).find(_.extractClass.contains(clazz))`.
+   */
+  def baseType(t: ScType, clazz: PsiClass)(implicit context: Context): Option[ScType] = {
+    val sameClass = (Iterator(t) ++ iterator(t)).filter(_.extractClass.contains(clazz)).toList
+    if (sameClass.isEmpty) None
+    else Some(mergeSameClass(sameClass, clazz))
   }
+
+  /**
+   * Merge several base types of the same class into one — scalac's
+   * `mergePrefixAndArgs`: combine arguments per position by the class's variance
+   * (covariant -> glb, contravariant -> lub, invariant -> kept). IntelliJ's plain
+   * `glb` does NOT do this — for incomparable args it yields the intersection of
+   * the applied types (`Box[Dog] with Box[Cat]`) rather than the merge
+   * (`Box[Dog with Cat]`), so we do it explicitly.
+   */
+  private def mergeSameClass(types: Seq[ScType], clazz: PsiClass)(implicit context: Context): ScType =
+    if (types.lengthCompare(1) <= 0) types.head
+    else clazz match {
+      case owner: ScTypeParametersOwner =>
+        val variances = owner.typeParameters.map(_.variance)
+        types.reduce { (a, b) =>
+          (a, b) match {
+            case (ParameterizedType(designator, as), ParameterizedType(_, bs))
+                if as.sizeCompare(bs) == 0 && as.sizeCompare(variances) == 0 =>
+              val merged = variances.indices.map { i =>
+                val v = variances(i)
+                if (v.isCovariant) as(i).glb(bs(i))
+                else if (v.isContravariant) as(i).lub(bs(i))
+                else as(i) // invariant: contributions are equivalent
+              }
+              ScParameterizedType(designator, merged)
+            case _ => a.glb(b)
+          }
+        }
+      case _ => types.reduce((a, b) => a.glb(b))
+    }
+
+  /**
+   * Ordered, deduplicated, same-symbol-merged base type sequence — one entry per
+   * base class, more-derived classes first (an order consistent with subtyping).
+   * Mirrors scalac's `baseTypeSeq` (modulo the exact symbol-id tie-break among
+   * unrelated classes, which is deterministic here but by base-class count + name).
+   */
+  def baseTypeSeq(t: ScType)(implicit context: Context): Seq[ScType] = {
+    val all = (Iterator(t) ++ iterator(t)).toList
+    val perClass = all.flatMap(tp => tp.extractClass.map(_ -> tp)).groupBy(_._1)
+    val merged = perClass.toSeq.map { case (c, ps) => mergeSameClass(ps.map(_._2), c) }
+    merged.sortBy { tp =>
+      val name = tp.extractClass.flatMap(c => Option(c.getQualifiedName)).getOrElse("")
+      (-baseClassCount(tp), name)
+    }
+  }
+
+  /** Number of transitive base classes — a subtyping-consistent ordering key
+   *  (a subtype has a superset of its supertype's base classes). */
+  private def baseClassCount(t: ScType)(implicit context: Context): Int =
+    t.extractClass match {
+      case Some(c) =>
+        val seen = mutable.Set.empty[PsiClass]
+        def go(c: PsiClass): Unit = if (seen.add(c)) c.getSupers.foreach(go)
+        go(c)
+        seen.size
+      case None => 0
+    }
+
+  // One base type per class. Same-class contributions are *merged*
+  // (mergeSameClass) rather than the previous "keep the most specific arm", so a
+  // class reached via several paths with different arguments yields the variance
+  // merge (e.g. Box[Dog with Cat]) instead of a single arm (Box[Dog] or Box[Cat]).
+  private def reduce(types: Seq[ScType])(implicit context: Context): Seq[ScType] =
+    types
+      .flatMap(t => t.extractClass.map(_ -> t))
+      .groupBy(_._1)
+      .iterator
+      .map { case (clazz, ps) => mergeSameClass(ps.map(_._2), clazz) }
+      .toList
 }
 
 private class BaseTypesIterator(tp: ScType)(implicit context: Context) extends Iterator[ScType] {
@@ -140,7 +204,27 @@ private class BaseTypesIterator(tp: ScType)(implicit context: Context) extends I
           // then William.this.type.baseType(trait Son)
           // should return Charles.this.Son not Charles#Son
           // (what `clazz.getTypeWithProjections()` returns)
-          clazz.`type`().toOption
+          val classType = clazz.`type`().toOption
+          // `X.this` is known to satisfy `X`'s self type, so its base types must
+          // include the self type's bases too. Without this, types/members reachable
+          // only via the self type are missed — e.g. defeating the seenFromClass walk
+          // in ThisTypeSubstitution (`BaseTypes.iterator(target).find(...)`).
+          val selfType = clazz match {
+            case td: ScTemplateDefinition => td.selfType
+            case _                        => None
+          }
+          (classType, selfType) match {
+            case (Some(ct), Some(st)) => Some(ScCompoundType(Seq(ct, st)))
+            case (Some(ct), None)     => Some(ct)
+            case (None, st)           => st
+          }
+        case owner: DesignatorOwner =>
+          // A singleton path type (e.g. `x.type` for `x: ValDef`) is not itself a
+          // class/object designator, so ClassType never fires for it. Widen to the
+          // declared/resolved type of the underlying value (scalac's `underlying`,
+          // used by SingleType.baseTypeSeq) so its base classes (e.g. ValDef ->
+          // ValOrDefDef -> Tree) are reachable through the singleton prefix.
+          owner.designatorSingletonType
         case tpt: TypeParameterType =>
           Some(tpt.upperType)
         case ScExistentialArgument(_, Nil, _, upper) =>
