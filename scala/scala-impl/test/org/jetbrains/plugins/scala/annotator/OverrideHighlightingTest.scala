@@ -1241,4 +1241,58 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
       case Error("pattp", "Type mismatch, expected: Infer.this.global.analyzer.global.Type, actual: Infer.this.global.Type") :: Nil =>
     }
   }
+
+  // Real-world regression: `global.definitions.AnyTpe: global.Type` was reported as a
+  // false "cannot upcast SymbolTable.this.Type to Typers.this.global.Type" while
+  // manually opening the real scala/scala Typers.scala in the IDE. This fixture is a
+  // skeletor extraction (see the file header) from the ACTUAL compiled scala/scala
+  // classes, seeded at the real Typers/DefinitionsClass/StandardDefinitions - not a
+  // hand-built approximation - self-compile-verified against the real classpath. With
+  // today's anchoring fixes it produces no error on the ascription; only unrelated
+  // skeleton noise (missing project settings: literal-types flag, stubbed AnyRefMap)
+  // survives, which this test explicitly tolerates.
+  def testSkeletorDefinitionsAnyTpeAscription(): Unit = {
+    val path = java.nio.file.Paths.get(org.jetbrains.plugins.scala.util.TestUtils.getTestDataPath, "annotator", "anyTpeSkeletonCake", "skeleton.scala")
+    val source = java.nio.file.Files.readString(path)
+    val errors = errorsFromScalaCode(source)
+    val upcastOrMismatch = errors.filter(e => e.message.contains("upcast") || e.message.contains("Type mismatch"))
+    assertMatches(upcastOrMismatch) {
+      case Nil =>
+    }
+  }
+
+  // Regression (hand-minimized from the AnyTpe report above): the INFERRED result type
+  // of `foo` is `SymbolTable.this.Type`, and `foo`'s owner is `Definitions` (a PROPER
+  // superclass of `SymbolTable` via `SymbolTable extends Definitions`). Re-anchoring
+  // that this-type at `g.foo` (prefix `g.type`, `g: Global`) must yield `g.Type`:
+  // scalac's `toPrefix` short-circuits because `SymbolTable <: Definitions` and
+  // `Global <: SymbolTable`. IntelliJ used to lack that first-branch check in
+  // ThisTypeSubstitution.doUpdateThisTypeFromClass and instead walked `Definitions`'s
+  // owner chain up to the enclosing `object repro`, fell off as UNMATCHED, and kept the
+  // raw `SymbolTable.this.Type` — a false "Cannot upcast SymbolTable.this.Type to
+  // g.Type". (The bug is in the re-anchoring toPrefix analog, NOT in BaseTypes.baseType,
+  // whose `repro`-prefixed result is scalac-correct and simply never consulted here.)
+  def testInferredMemberTypeAnchor(): Unit = {
+    val source =
+      """object repro {
+        |  trait Definitions {
+        |    self: SymbolTable =>
+        |    def foo = NoSymbol.tpe
+        |  }
+        |  trait SymbolTable extends Definitions {
+        |    abstract class Symbol { def tpe: Type = ??? }
+        |    object NoSymbol extends Symbol
+        |    abstract class Type
+        |  }
+        |  trait Global extends SymbolTable
+        |
+        |  val g: Global = ???
+        |  g.foo: g.Type
+        |}
+        |""".stripMargin
+    val errors = errorsFromScalaCode(source)
+    assertMatches(errors) {
+      case Nil =>
+    }
+  }
 }
