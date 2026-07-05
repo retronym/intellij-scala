@@ -8,6 +8,7 @@ import org.jetbrains.plugins.scala.lang.psi.api.base.patterns._
 import org.jetbrains.plugins.scala.lang.psi.api.statements._, params._
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel._, typedef._
 import org.jetbrains.plugins.scala.lang.psi.types._, api._, designator._, nonvalue._
+import org.jetbrains.plugins.scala.util.ScEquivalenceUtil
 
 import scala.annotation.tailrec
 
@@ -124,9 +125,41 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
     }
 
   private def doUpdateThisTypeFromClass(thisTp: ScThisType, target: ScType, @Nullable clazz: PsiClass): ScType =
-    if (clazz == null || clazz == thisTp.element || clazz.containingClass == null) {
-      ThisTypeSubstitution.line(s"baseWalk: clazz=${ThisTypeSubstitution.nameOf(clazz)} terminal  -> narrow against pre=$target")
+    if (clazz == null) {
+      ThisTypeSubstitution.line(s"baseWalk: anchorless  -> narrow against pre=$target")
       doUpdateThisType(thisTp, target)
+    }
+    else if (clazz == thisTp.element || clazz.containingClass == null) {
+      // ANCHOR DISCIPLINE (the cross-symbol pump's per-firing rule, complementing
+      // PROGRESS and CONSUMED): an ANCHORED walk may rewrite `thisTp` only if its
+      // owner-chain cursor can actually REACH thisTp's class — scalac's
+      // matchesPrefixAndClass demands `clazz == candidate`, so a walk whose cursor
+      // exhausts (top-level terminal, or the not-a-base bail below) without touching
+      // thisTp.element is scalac's UNMATCHED case: the this-type is left unchanged
+      // for a different (correctly-anchored) hop. Falling back to the anchorless
+      // inheritor heuristic there is the poison: e.g. [target=typer.this.type
+      // sfc=Typer] firing on `Infer.this` climbs Typer -> Typers (never Infer),
+      // then isMoreNarrow rewrites `Infer.this -> Global.this.analyzer.type` merely
+      // because the prefix widens to an Infer-INHERITOR (Analyzer) — embedding a
+      // fresh `Global.this` root that the chain remainder re-anchors: +2 spine
+      // segments per application, unbounded across re-derivations
+      // (skeleton-minimal.scala, scalac model
+      // AsSeenFromTest.crossSymbolPumpConfirmedInProduction). `isSameOrInheritor`
+      // rather than scalac's exact `==`: IntelliJ climbs PSI containingClass and
+      // spells cake self-types through the declaring trait, so the cursor may
+      // legitimately surface as an inheritor of the leaf's class (and in the
+      // not-a-base bail the leaf may be reachable only further up the cursor's
+      // containing chain — the SCL-21947 Trees/AstTransformer shape, where Global
+      // inherits Trees).
+      if (anchoredNarrowAdmitted(clazz, target, thisTp)) {
+        ThisTypeSubstitution.line(s"baseWalk: clazz=${ThisTypeSubstitution.nameOf(clazz)} terminal (cursor or target reaches ${thisTp.element.name})  -> narrow against pre=$target")
+        doUpdateThisType(thisTp, target)
+      }
+      else {
+        ThisTypeSubstitution.line(s"baseWalk: cursor ${ThisTypeSubstitution.nameOf(clazz)} exhausted without reaching ${thisTp.element.name}  -> UNMATCHED, keep $thisTp")
+        ThisTypeSubstitution.noteConsumes(false)
+        thisTp
+      }
     }
     else {
       // Use the merged `baseType` (scalac's `pre baseType clazz`) rather than the
@@ -151,9 +184,23 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
         // walking until the prefix is empty rather than bailing on `pre baseType clazz`; mirror
         // that by narrowing against `target` (guarded by `isMoreNarrow`, so unrelated this-types
         // stay put). SCL-21947, the OuterPathTransformer `currentClass` shape.
+        // ANCHOR DISCIPLINE applies here too (see the terminal case above): the
+        // narrow is only legitimate if the cursor's remaining containing chain can
+        // reach thisTp's class (Trees via Global in the SCL-21947 shape); otherwise
+        // this bail is scalac's UNMATCHED — the other door of the cross-symbol
+        // pump ([target=Global.this.analyzer.type sfc=Typer] firing on Infer.this:
+        // Typer is not a base of the target, and neither Typer nor Typers relates
+        // to Infer — narrowing here embedded the poison Global.this root).
         case _                   =>
-          ThisTypeSubstitution.line(s"${clazz.name} not a base of pre=$target  -> narrow against pre")
-          doUpdateThisType(thisTp, target)
+          if (anchoredNarrowAdmitted(clazz, target, thisTp)) {
+            ThisTypeSubstitution.line(s"${clazz.name} not a base of pre=$target  -> narrow against pre")
+            doUpdateThisType(thisTp, target)
+          }
+          else {
+            ThisTypeSubstitution.line(s"${clazz.name} not a base of pre=$target and cursor chain never reaches ${thisTp.element.name}  -> UNMATCHED, keep $thisTp")
+            ThisTypeSubstitution.noteConsumes(false)
+            thisTp
+          }
       }
     }
 
@@ -170,6 +217,38 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
 
   private def isSameOrInheritor(clazz: PsiClass, thisTp: ScThisType): Boolean =
     clazz == thisTp.element || isInheritorDeep(clazz, thisTp.element)
+
+  // ANCHOR DISCIPLINE helper: could scalac's owner-chain climb, continuing from
+  // `clazz` upward through containing classes, ever reach a cursor position that
+  // matches `thisTp`'s class? scalac's matchesPrefixAndClass fires only at
+  // `clazz == candidate`; same-or-INHERITOR compensates for IntelliJ spelling cake
+  // self-types through the declaring trait. `areClassesEquivalent` rather than `==`:
+  // an OBJECT member's declarationAnchor (getContainingClass) is a different PSI
+  // handle than the ScThisType's ScObject (SCL-6549's `object SCL6549` cursor
+  // failing to "reach" SCL6549 itself). When false, the walk is scalac's UNMATCHED
+  // case and the this-type must be kept for a correctly-anchored hop.
+  @tailrec
+  private def cursorChainReaches(clazz: PsiClass, thisTp: ScThisType): Boolean =
+    if (clazz == null) false
+    else if (isSameOrInheritor(clazz, thisTp) || ScEquivalenceUtil.areClassesEquivalent(clazz, thisTp.element)) true
+    else cursorChainReaches(clazz.containingClass, thisTp)
+
+  // ANCHOR DISCIPLINE, second admission: the target path denotes EXACTLY the leaf's
+  // own class/object (`implicitInstance.this` against pre `SCL6549.implicitInstance.type`,
+  // SCL-6549) — an honest re-spelling of the same instance as a path. scalac's
+  // matchesPrefixAndClass would fire on it under the correctly-anchored hop
+  // (pre.widen.typeSymbol == the leaf's class); IntelliJ's fused chain reaches it
+  // through a coarser anchor standing in for two sequential asSeenFroms. EXACT
+  // class only — a strict-inheritor tip (`Global.this.analyzer.type` vs `Infer.this`,
+  // Analyzer inherits Infer) is precisely the cross-symbol poison and stays blocked.
+  private def targetDenotesLeafClass(target: ScType, thisTp: ScThisType)(implicit context: Context): Boolean =
+    extractAll(target) match {
+      case Some(cls: PsiClass) => cls == thisTp.element || ScEquivalenceUtil.areClassesEquivalent(cls, thisTp.element)
+      case _                   => false
+    }
+
+  private def anchoredNarrowAdmitted(clazz: PsiClass, target: ScType, thisTp: ScThisType): Boolean =
+    cursorChainReaches(clazz, thisTp) || targetDenotesLeafClass(target, thisTp)
 
   private def hasSameOrInheritor(compound: ScCompoundType, thisTp: ScThisType)(implicit context: Context): Boolean = {
     compound.components

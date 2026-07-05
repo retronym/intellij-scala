@@ -1196,4 +1196,49 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
       System.clearProperty("scala.asf.trace")
     }
   }
+
+  // REGRESSION repro attempt: skeletor-extracted (real, compilable) skeleton of the
+  // scala/scala Infer/Analyzer/Global cake (~/code/minimal/target/runs/cake-compact/
+  // skeleton-probe.scala), with the `Global.analyzer` lazy val (missing from the
+  // skeletor seed set) added back, plus a `crashProbe` member in `Infer` calling
+  // `global.analyzer.formalTypes(...)` — mirrors the live SOE's cycling type
+  // `ScProjectionType(Infer.this.global.type)` and substitutor chain (`Infer.this ->
+  // ... asSeenFrom Global/Analyzer/Infer`, FUSED-SUBST-SCALAC.md's cross-symbol pump).
+  def testScratchSkeletorCakeCrossSymbolPump(): Unit = {
+    System.setProperty("scala.asf.trace", "true")
+    try {
+      val path = java.nio.file.Paths.get("/Users/jz/code/minimal/target/runs/cake-compact/skeleton-probe.scala")
+      val source = java.nio.file.Files.readString(path)
+      val errors = errorsFromScalaCode(source)
+      System.err.println(s"SKELETOR-CAKE-ERRORS -> ${errors.map(_.toString)}")
+    } finally {
+      System.clearProperty("scala.asf.trace")
+    }
+  }
+
+  // Minimized copy of testScratchSkeletorCakeCrossSymbolPump: only the ingredients
+  // that reproduce the growth pump (see skeleton-minimal.scala's header comment for
+  // the derivation) — Global.analyzer/Global.typer, Analyzer inheriting both Infer
+  // and Typers, and Infer.Inferencer#inferTypedPattern calling
+  // `typer.applyTypeToWildcards(pattp)`. No trace/highlighting noise from the
+  // other ~2400 lines of unrelated compiler cake.
+  //
+  // GOLDEN = exact scalac parity (scalac 2.13 on skeleton-minimal.scala):
+  //   error: type mismatch;
+  //    found   : pattp.type (with underlying type Infer.this.global.Type)
+  //    required: Infer.this.global.analyzer.global.Type
+  // ONE re-anchor round (`.analyzer.global`), no more. Before the anchor-discipline
+  // fix the expected type grew a round per re-derivation
+  // (`…analyzer.global.analyzer.global.Type` after a single batch pass; SOE on real
+  // scala/scala sources) — the cross-symbol pump, see ThisTypeSubstitution's
+  // cursorChainReaches and scalac's AsSeenFromTest.crossSymbolPumpConfirmedInProduction.
+  def testScratchSkeletorCakeCrossSymbolPumpMinimal(): Unit = {
+    val path = java.nio.file.Paths.get("/Users/jz/code/minimal/target/runs/cake-compact/skeleton-minimal.scala")
+    val source = java.nio.file.Files.readString(path)
+    val errors = errorsFromScalaCode(source)
+    System.err.println(s"SKELETOR-CAKE-MINIMAL-ERRORS -> ${errors.map(_.toString)}")
+    assertMatches(errors) {
+      case Error("pattp", "Type mismatch, expected: Infer.this.global.analyzer.global.Type, actual: Infer.this.global.Type") :: Nil =>
+    }
+  }
 }

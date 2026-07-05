@@ -178,8 +178,61 @@ rules are cheaper per firing and consumption prunes chain work), and a productio
 repro attempt of the cross-symbol pump (member declared in a base trait, path
 spelled through an inheriting class).
 
+## 5b. RESULTS (2026-07-05): cross-symbol pump CONFIRMED in production and FIXED — the third rule, ANCHOR DISCIPLINE
+
+The §5a open item ("production repro attempt of the cross-symbol pump") landed, SOE'd, and got its rule.
+
+**Production repro**: a skeletor extraction of the real Infer/Analyzer/Global cake, trimmed to 39 lines
+(`~/code/minimal/target/runs/cake-compact/skeleton-minimal.scala`, test
+`OverrideHighlightingTest.testScratchSkeletorCakeCrossSymbolPumpMinimal`). One batch annotation pass grew the
+expected type from `Infer.this.global.Type` to `…global.analyzer.global.analyzer.global.Type`; on real
+scala/scala sources the same shape is the ThisTypeSubstitution SOE. scalac oracle on the fixture: a bounded
+mismatch, `required: Infer.this.global.analyzer.global.Type` — exactly ONE re-anchor round.
+
+**Why PROGRESS+CONSUMED miss it (model/production gap resolved)**: production spells targets rooted at
+`Global.this`/`Infer.this.global`, never `Analyzer.this` (the model fixture's root), so Progress's
+root-inherits-leaf check never fires — Global inherits none of the cake traits. And the growth is not a
+recirculation shape at all: it is a **per-firing soundness hole in the anchored walk**. Both bail-outs
+(owner-cursor exhausted at top-level; `pre baseType clazz` empty) fell back to the anchorless `isMoreNarrow`
+heuristic, which happily rewrote `Infer.this -> Global.this.analyzer.type` inside a chain whose anchor was
+`Typer` — a cursor that can never reach Infer. scalac's `matchesPrefixAndClass` demands `clazz == candidate`:
+that firing is UNMATCHED, the this-type is kept for a correctly-anchored hop. Each poison rewrite embeds a
+fresh `Global.this` root that the chain remainder re-anchors: +2 spine segments per application, recirculated
+without bound because every fresh spelling is a fresh cache key
+(`ORIGIN` stacks: `updateProjectionType` rebuild -> eager `actualElement` / canonicalize probe / conformance
+`collapseSingletonPath` -> `processTypeImpl` mints on ever-deeper prefixes).
+
+**The rule — ANCHOR DISCIPLINE** (`ThisTypeSubstitution.anchoredNarrowAdmitted`): an anchored walk may fall
+into the narrowing climb only if
+(a) `cursorChainReaches` — its remaining `containingClass` chain can reach the leaf's class
+(same-or-INHERITOR — the inheritor allowance compensates for IntelliJ spelling cake self-types through the
+declaring trait, and for the SCL-21947 Trees/AstTransformer shape where the leaf is reachable further up the
+cursor chain; `areClassesEquivalent` beside `==`, because an OBJECT member's declarationAnchor is a different
+PSI handle than the ScThisType's ScObject — SCL-6549's `SCL6549` cursor failing to "reach" `SCL6549`), OR
+(b) `targetDenotesLeafClass` — the target path denotes EXACTLY the leaf's class/object
+(`implicitInstance.this` against pre `SCL6549.implicitInstance.type`): an honest re-spelling of the same
+instance that scalac's correctly-anchored hop would produce; IntelliJ's fused chain reaches it through a
+coarser anchor standing in for two sequential asSeenFroms. Exact class only — a strict-INHERITOR tip
+(`Global.this.analyzer.type` vs `Infer.this`) is precisely the poison and stays blocked.
+Otherwise: keep the this-type, `noteConsumes(false)` — scalac's UNMATCHED. Applied at BOTH
+bail-outs; the anchorless walk (`clazz == null`) keeps the heuristic unchanged.
+
+**Falsified en route** (kept out of the tree): making the substitution pass resolution-free
+(raw projection rebuild without the eager alias collapse + canonicalization moved off the rebuild path)
+was neither sufficient (the accretion re-entered through conformance-side collapse probes) nor safe
+(broke alias-collapse goldens SCL-6549/7100/7268/7474). The re-entrant resolutions during rebuild are
+bounded once the firings themselves are disciplined — the poison source, not the recirculation plumbing,
+was the bug. Diagnostics that found it: `RecursiveUpdateDepthGuard` (SubtypeUpdater), the
+`scala.asf.origin` one-shot stack hunt, and CHAIN-AUDIT.
+
+**Validation**: repro test now asserts byte-exact scalac parity (one `.analyzer.global` round);
+OverrideHighlightingTest + TypeSystemTckTest + TypeInferenceBugs5Test + Singleton*/typeConformance.generated
+all green. scalac-side model note updated at `crossSymbolPump` (the model's `anchoredMatch` fallbacks
+reproduce the unfixed behaviour; a faithful update returns None at the bail-outs unless the owner chain
+reaches the leaf's symbol).
+
 ## 6. Non-goals / parked
 
 - The `BaseTypes` caching design (PR #5 comment thread) — orthogonal; the pump exists even with cached base types.
 - Retiring the conformance-side collapse helpers — blocked on profiling canonicalize-at-mint against real scala/scala sources (Jason checking manually).
-- The remaining anchorless `ScSubstitutor(tp)` sites — enumerated in `da8621b4eb`'s message.
+- The remaining anchorless `ScSubstitutor(tp)` sites — enumerated in `da8621b4eb`'s message. UNPARKED: now its own handoff, ANCHORLESS-ELIMINATION.md (census -> per-site anchoring -> staged deletion of the `clazz == null` mode; includes the `targetDenotesLeafClass` redundancy re-test).
