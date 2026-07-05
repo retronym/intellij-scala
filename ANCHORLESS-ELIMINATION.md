@@ -13,29 +13,33 @@ Why this is the right next cut: scalac has NO anchorless mode. Every this-rewrit
 - **Anchoring does NOT change rewrite outputs where both walks agree** — `da8621b4eb` verified 592/592 with no golden churn. The risk profile of this work is per-site anchor MIS-derivation (wrong declaring class), not systemic.
 - **Trace tooling** (all in `ThisTypeSubstitution`): `scala.asf.trace` (set via `System.setProperty` INSIDE the test body — sbt `-D` is not forwarded to the forked JVM); `NEW #id target=… seenFromClass=<null>` construction lines with 3-frame call sites; `scala.asf.origin=<regex>` one-shot full-stack dump at the first matching target mint; `CHAIN-AUDIT`. `RecursiveUpdateDepthGuard` (SubtypeUpdater) converts runaway recursion into a structural dump instead of an SOE.
 
-## 2. Step 0 — census of FIRINGS, not constructions
+## 2. Step 0 — census of FIRINGS, not constructions — DONE (2026-07-05)
 
-A null-anchored substitutor that never matches a this-leaf is harmless; only firings matter. Add a counter (trace-gated, or a dev-mode `LOG.warn` with a filtered stack like `traceNew`'s) in the `clazz == null` branch of `doUpdateThisTypeFromClass`, keyed by construction site, and run the full oracle (§5) to get the real list. Known candidates, from `da8621b4eb`'s message plus a fresh grep (line numbers may have drifted):
+A null-anchored substitutor that never matches a this-leaf is harmless; only firings matter. Implemented as an identity-keyed call-site map + a per-site firing counter in `doUpdateThisTypeFromClass`'s `clazz == null` branch, gated on `-Dscala.asf.nullcensus` (off by default, zero prod cost), dumping a sorted table at JVM shutdown. Real census on the full oracle: **11 sites, ~7560 firings**, 85% from one site. See FUSED-SUBST-SCALAC.md §5c for the full ledger entry.
 
-- `ScalaResolveState.substitutorWithThisType` **0-arg** overload (`ScalaResolveState.scala:103`, delegates to 1-arg `followUpdateThisType`). Callers today: `ConstructorResolveProcessor:39`, `SignatureProcessor:113` and `:198`, `ImplicitConversionProcessor:41`/`:62`, `ImplicitParametersProcessor:41`. (`MethodResolveProcessor:115` already uses the anchored overload.)
-- `BaseProcessor:259` (type-param upper bound).
-- `ScalaBounds:176`.
-- `ScParameterizedTypeElementAnnotator:50`/`:51`.
-- `ScalaConformance:845`.
-- `ScExtractorPattern:148`.
-- Any other 1-arg `ScSubstitutor.apply(tp)` / `followUpdateThisType(tp)` callers the census turns up.
+Actual sites found (differs from the pre-census guesses below — `BaseProcessor:259` and `ScExtractorPattern:148` never fired on this oracle; keep watching for them):
 
-On the minimal pump fixture the only null-sfc constructions observed were Predef-ish targets from `ResolveStateOps.substitutorWithThisType:104` — but that is one fixture, not a census.
+- `ResolveStateOps.substitutorWithThisType` 0-arg overload — **6454 firings**, all six callers listed below. ANCHORED.
+- `ScProjectionType.processType`'s three early-return branches (lines ~81/84/91) — 933 firings combined. ANCHORED.
+- `MostSpecificUtil.innerSrrForImplicitCandidate` — 74. ANCHORED.
+- `ScalaBounds.ClassLike.getSuperClasses` — 53. ANCHORED.
+- `PatternTypeInference.getPatternType`'s extractor-pattern this-type re-anchor — 45. ANCHORED.
+- `ScParameterizedTypeElementAnnotator.annotate` — 1. ANCHORED.
+- `ScalaConformance.workWithTypeAlias:845` — 1. **NOT anchored** — see §3 finding below.
 
-## 3. Anchoring each site
+## 3. Anchoring each site — DONE for 10 of 11 sites (2026-07-05)
 
 The pattern from `da8621b4eb`: the anchor is the DECLARING class of the member whose type the substitutor will process — `ScSubstitutor.declarationAnchor(member)` or `member.findContextOfType(classOf[PsiClass])`. Per-site judgment, not mechanical:
 
-- `SignatureProcessor` / implicit processors / `ConstructorResolveProcessor`: the resolved signature's / implicit member's / constructor's declaring class, available at each call site.
-- `BaseProcessor:259` (tparam upper bound): type params are not class members — the this-types inside a bound belong to the enclosing classes of the tparam's OWNER; anchor at the owner's containing class.
-- Conformance / bounds / annotator sites: these mint targets for a specific this-elimination; the anchor is the class whose `this` the site is eliminating (usually in hand as the designator/this being processed).
+- `SignatureProcessor` / implicit processors / `ConstructorResolveProcessor`: anchored at the resolved/implicit named element's declaring class (`ScSubstitutor.declarationAnchor`).
+- `ScProjectionType.processType`'s three branches: each guard already proves `elementClazz.exists(areClassesEquivalent(_, clazz))`, so `clazz` itself — no derivation needed — is the exact anchor.
+- `MostSpecificUtil`: anchor at the implicit candidate's (`r.element`'s) declaring class.
+- `ScalaBounds.getSuperClasses`: anchor at the class itself when `getNamedElement` is a `PsiClass` (asSeenFrom on a class's OWN supertypes is `sym.info.asSeenFrom(pre, sym)`, not `sym.owner` — this site differs from the member-declaration pattern), else at its declaring class.
+- `ScParameterizedTypeElementAnnotator`, `PatternTypeInference`: declaring class of the projected/unapply member.
 
-If a site has no derivable declaration anchor, that is a FINDING (document why — it likely marks a place where IntelliJ asks a question scalac never asks), not something to paper over with a guessed class.
+**Remaining FINDING**: `ScalaConformance.workWithTypeAlias:845` — `sign.typeAlias`'s `nameContext` has no `PsiMember` (`ScSubstitutor.declarationAnchor` returns `null`), so it stayed anchorless even after the attempted fix. Only 1 firing on the full oracle. Next step: identify which TCK/test shape drives this (likely an anonymous-refinement or synthetic type alias with no real declaration site) and decide whether that's scalac's own answer (no `sym.owner` because there's no real `sym`) or a derivable anchor we haven't found yet.
+
+`BaseProcessor:259` (tparam upper bound) never fired in this census — if it turns up in a future run, the guidance stands: type params are not class members, so anchor at the enclosing classes of the tparam's OWNER, not the tparam itself.
 
 ## 4. Endgame flips (staged)
 
