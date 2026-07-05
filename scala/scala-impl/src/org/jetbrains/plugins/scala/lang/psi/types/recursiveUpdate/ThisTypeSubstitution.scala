@@ -130,6 +130,26 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
       ThisTypeSubstitution.line(s"baseWalk: anchorless  -> narrow against pre=$target")
       doUpdateThisType(thisTp, target)
     }
+    // scalac AsSeenFromMap.toPrefix, first non-skip branch: return `pre` as soon as
+    // the this-type's own class is a subclass of the current cursor `clazz` AND `pre`
+    // widens to an inheritor of that this-class (scalac's
+    //   (sym isNonBottomSubClass clazz) && (pre.widen.typeSymbol isNonBottomSubClass sym)).
+    // scalac tests this at EVERY toPrefix step, BEFORE consulting `pre baseType clazz`;
+    // we only tested the exact `clazz == thisTp.element` terminal below, so a this-type
+    // declared in a PROPER superclass of `clazz` and inherited into it drove the
+    // owner-climb up to the enclosing object and fell off as UNMATCHED instead of
+    // re-anchoring onto `pre`. The minimal shape: `SymbolTable.this.Type` is the inferred
+    // result of a member whose owner is `Definitions` (SymbolTable <: Definitions) seen
+    // from `Global.this.type` — scalac short-circuits to `Global.this.Type`, we walked
+    // Definitions -> repro and lost the anchor (`g.foo: g.Type`, the AnyTpe report shape).
+    // The `thisTp.element <: clazz` guard is scalac's discriminator against the
+    // cross-symbol pump: there the this-class is NOT a subclass of the cursor (Infer is
+    // not a subclass of Typer), so this branch is skipped and ANCHOR DISCIPLINE below
+    // still blocks the poison narrow. `isMoreNarrow` is scalac's `pre.widen <: sym` test.
+    else if (isInheritorDeep(thisTp.element, clazz) && isMoreNarrow(target, thisTp, Set.empty)) {
+      ThisTypeSubstitution.line(s"toPrefix: ${thisTp.element.name} <: ${clazz.name} and pre widens to it  -> narrow against pre=$target")
+      doUpdateThisType(thisTp, target)
+    }
     else if (clazz == thisTp.element || clazz.containingClass == null) {
       // ANCHOR DISCIPLINE (the cross-symbol pump's per-firing rule, complementing
       // PROGRESS and CONSUMED): an ANCHORED walk may rewrite `thisTp` only if its
