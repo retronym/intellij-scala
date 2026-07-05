@@ -231,6 +231,36 @@ all green. scalac-side model note updated at `crossSymbolPump` (the model's `anc
 reproduce the unfixed behaviour; a faithful update returns None at the bail-outs unless the owner chain
 reaches the leaf's symbol).
 
+## 5c. RESULTS (2026-07-05): ANCHORLESS-ELIMINATION Step 0+3 — census and anchoring, 7560 -> 1 firing
+
+The unparked item from §6 landed its first two deliverables. A trace-independent census
+(`-Dscala.asf.nullcensus`, identity-keyed call-site map + firing counter in
+`doUpdateThisTypeFromClass`'s `clazz == null` branch) run over the full oracle found 11
+construction sites and ~7560 FIRINGS (not constructions — a null-anchored substitutor that
+never matches a this-leaf is harmless). 85% of all firings were one site:
+`ScalaResolveState.substitutorWithThisType`'s 0-arg overload, called from six resolve/implicit
+processors that all had the resolved `PsiNamedElement` in scope and simply hadn't switched to
+the already-existing anchored overload (`MethodResolveProcessor` had).
+
+Anchored, per-site, following `da8621b4eb`'s declaring-class pattern: the six
+`substitutorWithThisType` callers (ConstructorResolveProcessor, SignatureProcessor x2,
+ImplicitConversionProcessor x2, ImplicitParametersProcessor) now pass
+`ScSubstitutor.declarationAnchor(namedElement)`; `ScProjectionType.processType`'s three
+early-return branches use the `clazz` already proven equivalent to `elementClazz` by their own
+guard; `MostSpecificUtil`, `ScalaBounds.getSuperClasses` (anchor = the class itself when
+`getNamedElement` is a `PsiClass` — `sym.info.asSeenFrom(pre, sym)` for a class's OWN
+supertypes, not `sym.owner`), `ScParameterizedTypeElementAnnotator`, and
+`PatternTypeInference`'s extractor this-type re-anchor got the same treatment.
+
+Result: 586/586 oracle green, no golden churn. Re-census: **one** firing left,
+`ScalaConformance.workWithTypeAlias:845` — `sign.typeAlias`'s `nameContext` has no `PsiMember`
+to anchor on. Left anchorless (a FINDING, not papered over — see ANCHORLESS-ELIMINATION.md §3);
+next agent should determine why that alias lacks a declaring member before forcing an anchor.
+
+Deliverables (a)/(b) of ANCHORLESS-ELIMINATION.md done. Remaining: (c) the staged `clazz ==
+null` endgame flip (now down to one legitimate-looking exception — investigate before flipping),
+(d) the `targetDenotesLeafClass` redundancy re-test, (e) this entry + memory update (done).
+
 ## 6. Non-goals / parked
 
 - The `BaseTypes` caching design (PR #5 comment thread) — orthogonal; the pump exists even with cached base types.
