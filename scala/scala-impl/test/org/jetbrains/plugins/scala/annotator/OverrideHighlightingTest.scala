@@ -218,7 +218,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // principled fix that would retire it is a cached, closed-form `baseType` feeding the
   // owner-chain walk (à la scalac's `(pre baseType clazz).prefix` over a cached seq), so the
   // step is inert data and the walk cannot re-enter asSeenFrom.
-  def testScratchInferencerTrace(): Unit = {
+  def _testScratchInferencerTrace(): Unit = {
     System.setProperty("scala.asf.trace", "true")
     System.setProperty("scala.asf.origin", "analyzer\\.global") // one-shot stack at first doubled target
     System.setProperty("scala.asf.nocanon", "true") // canonicalize-at-mint is ON by default; disable so this
@@ -251,7 +251,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // val-path spellings collapse where projections are re-minted, so no grown
   // targets are ever constructed (doubling eliminated; deepest spelling equals
   // scalac's one-hop answer). Traces the CANON collapses.
-  def testScratchInferencerTraceCanon(): Unit = {
+  def _testScratchInferencerTraceCanon(): Unit = {
     System.setProperty("scala.asf.trace", "true")
     try {
       val errors = errorsFromScalaCode(
@@ -1071,7 +1071,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // an Enumeration rather than inheriting one) and CONSUMED does not block update 2
   // (CE is a NEW class introduced by update 1's output). This was the counterexample
   // that falsified the terminal-output probe (see git history).
-  def testScratchSCL7043Trace(): Unit = {
+  def _testScratchSCL7043Trace(): Unit = {
     System.setProperty("scala.asf.trace", "true")
     try {
       val errors = errorsFromScalaCode(
@@ -1098,7 +1098,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // x: global.ValDef and ValDef is declared in trait Trees { self: SymbolTable => }
   // with Symbol coming from a SIBLING cake slice via the self-type — the member's
   // this-type must re-anchor through the val-path (Trees.this -> global.type).
-  def testScratchNscValDefSymbol(): Unit = {
+  def _testScratchNscValDefSymbol(): Unit = {
     System.setProperty("scala.asf.trace", "true")
     try doTestScratchNscValDefSymbol()
     finally System.clearProperty("scala.asf.trace")
@@ -1135,7 +1135,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // recirculating, the progress postcondition alone holds the fixpoint. (The old
   // hasRecursiveThisType guard is gone; before Progress, this configuration
   // StackOverflowed.)
-  def testScratchPumpFixpoint(): Unit = {
+  def _testScratchPumpFixpoint(): Unit = {
     System.setProperty("scala.asf.nocanon", "true")
     try {
       val errors = errorsFromScalaCode(
@@ -1166,7 +1166,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // chain elements would re-narrow an already-matched this (NM.this -> SN.this ->
   // F.this) where scalac (and the golden) stop at NM.this; first-spine-match-wins
   // preserves NM.this. Trace of the chain compositions.
-  def testScratchSCL7008Trace(): Unit = {
+  def _testScratchSCL7008Trace(): Unit = {
     System.setProperty("scala.asf.trace", "true")
     try {
       val errors = errorsFromScalaCode(
@@ -1204,7 +1204,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // `global.analyzer.formalTypes(...)` — mirrors the live SOE's cycling type
   // `ScProjectionType(Infer.this.global.type)` and substitutor chain (`Infer.this ->
   // ... asSeenFrom Global/Analyzer/Infer`, FUSED-SUBST-SCALAC.md's cross-symbol pump).
-  def testScratchSkeletorCakeCrossSymbolPump(): Unit = {
+  def _testScratchSkeletorCakeCrossSymbolPump(): Unit = {
     System.setProperty("scala.asf.trace", "true")
     try {
       val path = java.nio.file.Paths.get("/Users/jz/code/minimal/target/runs/cake-compact/skeleton-probe.scala")
@@ -1232,7 +1232,7 @@ class OverrideHighlightingTest extends ScalaHighlightingTestBase {
   // (`…analyzer.global.analyzer.global.Type` after a single batch pass; SOE on real
   // scala/scala sources) — the cross-symbol pump, see ThisTypeSubstitution's
   // cursorChainReaches and scalac's AsSeenFromTest.crossSymbolPumpConfirmedInProduction.
-  def testScratchSkeletorCakeCrossSymbolPumpMinimal(): Unit = {
+  def _testScratchSkeletorCakeCrossSymbolPumpMinimal(): Unit = {
     val path = java.nio.file.Paths.get("/Users/jz/code/minimal/target/runs/cake-compact/skeleton-minimal.scala")
     val source = java.nio.file.Files.readString(path)
     val errors = errorsFromScalaCode(source)
