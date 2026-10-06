@@ -113,14 +113,14 @@ final class ScProjectionType private(val projected: ScType,
 
       processor.processType(projected, resolvePlace, ScalaResolveState.empty, updateWithProjectionSubst)
 
-      ScProjectionType.mostSpecific(processor.candidates) match {
+      (processor.candidates match { case Array(c) => Some(c); case _ => None }) match {
         case Some(candidate) => candidate.element match {
           case candidateElement: PsiNamedElement =>
             if (ScProjectionType.debugMemberType && processor.candidates.length > 1)
               System.err.println(s"[memberType] $this: ${processor.candidates.map(c => c.element.name + "@" + c.element.findContextOfType(classOf[PsiClass]).map(_.name).orNull).mkString(", ")} -> ${candidateElement.findContextOfType(classOf[PsiClass]).map(_.name).orNull}")
             // scalac's `sym.info.asSeenFrom(pre, sym.owner)`: anchor at the *resolved* member's owner,
             // which for an override is not the static `element`'s.
-            val anchorElement = if (element.is[PsiClass]) element else candidateElement
+            val anchorElement = element
             val thisSubstitutor = ScSubstitutor(projected, anchorElement.findContextOfType(classOf[PsiClass]).orNull)
             val defaultSubstitutor =
               projected match {
