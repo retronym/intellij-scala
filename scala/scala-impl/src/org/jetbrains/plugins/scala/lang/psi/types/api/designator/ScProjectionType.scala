@@ -249,7 +249,7 @@ final class ScProjectionType private(val projected: ScType,
               this.equiv(lower, constraints, falseUndef)
             case _ => ConstraintsResult.Left
           }
-      case thisType @ ScThisType(thisClazz) =>
+      case ScThisType(_) =>
         element match {
           case _: ScObject                        => ConstraintsResult.Left
           case t: ScTypedDefinition if t.isStable =>
@@ -257,14 +257,6 @@ final class ScProjectionType private(val projected: ScType,
               case Right(singleton: DesignatorOwner) if singleton.isSingleton =>
                 val newSubst = actualSubst.followed(ScSubstitutor(projected, ScSubstitutor.declarationAnchor(t)))
                 r.equiv(newSubst(singleton), constraints, falseUndef)
-              // Cake-pattern stable path: `pre.global` (this projection) where `global: Global`
-              // (not singleton-typed) vs `Global.this`. When the val's type class matches the
-              // this-type's class, they denote the same instance. (SCL-21947)
-              case Right(tp) =>
-                tp.extractClass match {
-                  case Some(cls) if ScEquivalenceUtil.areClassesEquivalent(thisClazz, cls) => constraints
-                  case _ => ConstraintsResult.Left
-                }
               case _ => ConstraintsResult.Left
             }
           case _ => ConstraintsResult.Left
