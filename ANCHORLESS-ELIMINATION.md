@@ -49,13 +49,13 @@ The pattern from `da8621b4eb`: the anchor is the DECLARING class of the member w
 
 ## 5. Validation oracle
 
-From the repo ROOT (`/Users/jz/code/intellij-scala` — `sbt --client` attaches per-directory; running from elsewhere hits the wrong build). Batch commands in ONE quoted arg with `;` (the client mis-parses separate args):
+From the repo ROOT (`sbt --client` attaches per-directory; running from elsewhere hits the wrong build; see SCL-21947.md §4 for the JDK 25 / `JDK_17` server setup). Batch commands in ONE quoted arg with `;` (the client mis-parses separate args):
 
 ```
 sbt --client "packageArtifact; testOnly org.jetbrains.plugins.scala.annotator.OverrideHighlightingTest org.jetbrains.plugins.scala.lang.typeSystemTck.TypeSystemTckTest org.jetbrains.plugins.scala.lang.typeInference.generated.TypeInferenceBugs5Test org.jetbrains.plugins.scala.lang.typeInference.Singleton* org.jetbrains.plugins.scala.lang.typeConformance.generated.*"
 ```
 
-Baseline: **597/597**. Sensitive tests to watch individually: `testScratchSkeletorCakeCrossSymbolPumpMinimal` (scalac-parity golden — any spelling drift is a red flag), `testSCL6549` (anchor-sensitive, object shapes), `testSCL7008` (CONSUMED), `testSCL7043` (legitimate sequential re-anchor — the historical counterexample killer).
+Baseline: **597/597** (2026-10-06, after rebasing onto `idea262.x` + the standalone soundness stack). This oracle is necessary but not sufficient: also run the broad set from SCL-21947.md §4, which caught six regressions the oracle missed. The `testScratch*` goldens are disabled and need `~/code/minimal` fixtures that only exist on the original machine. Sensitive tests to watch individually: `testScratchSkeletorCakeCrossSymbolPumpMinimal` (scalac-parity golden — any spelling drift is a red flag), `testSCL6549` (anchor-sensitive, object shapes), `testSCL7008` (CONSUMED), `testSCL7043` (legitimate sequential re-anchor — the historical counterexample killer).
 
 ## 6. Gotchas
 
