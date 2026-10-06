@@ -113,15 +113,10 @@ final class ScProjectionType private(val projected: ScType,
 
       processor.processType(projected, resolvePlace, ScalaResolveState.empty, updateWithProjectionSubst)
 
-      (processor.candidates match { case Array(c) => Some(c); case _ => None }) match {
-        case Some(candidate) => candidate.element match {
+      processor.candidates match {
+        case Array(candidate) => candidate.element match {
           case candidateElement: PsiNamedElement =>
-            if (ScProjectionType.debugMemberType && processor.candidates.length > 1)
-              System.err.println(s"[memberType] $this: ${processor.candidates.map(c => c.element.name + "@" + c.element.findContextOfType(classOf[PsiClass]).map(_.name).orNull).mkString(", ")} -> ${candidateElement.findContextOfType(classOf[PsiClass]).map(_.name).orNull}")
-            // scalac's `sym.info.asSeenFrom(pre, sym.owner)`: anchor at the *resolved* member's owner,
-            // which for an override is not the static `element`'s.
-            val anchorElement = element
-            val thisSubstitutor = ScSubstitutor(projected, anchorElement.findContextOfType(classOf[PsiClass]).orNull)
+            val thisSubstitutor = ScSubstitutor(projected, element.findContextOfType(classOf[PsiClass]).orNull)
             val defaultSubstitutor =
               projected match {
                 case _: ScThisType => candidate.substitutor
@@ -291,31 +286,6 @@ object ScProjectionType {
 
   private val guard = RecursionManager.RecursionGuard[ScType, Nothing]("aliasProjectionGuard")
 
-  private[designator] val debugMemberType: Boolean = java.lang.Boolean.getBoolean("scala.debug.memberType")
-
-  /**
-   * scalac's `pre.member(name)` picks the most specific member; IntelliJ's resolver may
-   * return several candidates for one name (an abstract `type Symbol` and the `class Symbol`
-   * realizing it through a self type; an abstract `val global` and its override). Pick the
-   * single candidate that no other one overrides: a concrete member over an abstract one, a
-   * member of a subclass over one of its superclass. `None` when that isn't unique.
-   */
-  private def mostSpecific(candidates: Array[ScalaResolveResult]): Option[ScalaResolveResult] = candidates match {
-    case Array(c) => Some(c)
-    case Array()  => None
-    case cs =>
-      def owner(r: ScalaResolveResult): PsiClass = r.element.findContextOfType(classOf[PsiClass]).orNull
-      def concrete(r: ScalaResolveResult): Boolean = ScalaPsiUtil.isConcreteElement(r.element.nameContext)
-      def overrides(a: ScalaResolveResult, b: ScalaResolveResult): Boolean =
-        (concrete(a) && !concrete(b)) || (concrete(a) == concrete(b) && {
-          val (oa, ob) = (owner(a), owner(b))
-          oa != null && ob != null && oa != ob && oa.isInheritor(ob, /*checkDeep*/ true)
-        })
-      cs.filterNot(b => cs.exists(a => (a ne b) && overrides(a, b))) match {
-        case Array(c) => Some(c)
-        case _        => None
-      }
-  }
 
   private[designator] def isSingletonLike(t: ScType): Boolean = t match {
     case _: ScThisType      => true
