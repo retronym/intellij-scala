@@ -1,5 +1,8 @@
 package org.jetbrains.plugins.scala.lang.resolve
 
+import com.intellij.psi.PsiManager
+import org.intellij.lang.annotations.Language
+import org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiManager
 import org.jetbrains.plugins.scala.{LatestScalaVersions, ScalaVersion}
 
 class ExportsResolveTest extends SimpleResolveTestBase {
@@ -7,6 +10,16 @@ class ExportsResolveTest extends SimpleResolveTestBase {
 
   override protected def supportedIn(version: ScalaVersion): Boolean =
     version >= LatestScalaVersions.Scala_3_0
+
+  /**
+   * Highlights `text` with cold resolve caches, so the outcome does not depend on caches warmed by
+   * earlier tests in the same run (SCL-22266 passed in a full class run but failed on its own).
+   */
+  private def checkTextHasNoErrorsWithColdCaches(@Language("Scala 3") text: String): Unit = {
+    ScalaPsiManager.instance(getProject).clearAllCachesAndWait()
+    PsiManager.getInstance(getProject).dropPsiCaches()
+    checkTextHasNoErrors(text)
+  }
 
   def testExportSimple(): Unit =
     doResolveTest(
@@ -411,7 +424,7 @@ class ExportsResolveTest extends SimpleResolveTestBase {
        |""".stripMargin
   )
 
-  def testSCL22266(): Unit = checkTextHasNoErrors(
+  def testSCL22266(): Unit = checkTextHasNoErrorsWithColdCaches(
     """
       |object A {
       |  class Ops(i: Int):
@@ -434,11 +447,7 @@ class ExportsResolveTest extends SimpleResolveTestBase {
       |""".stripMargin
   )
 
-  // TODO ignored: order-dependent, already on upstream idea263.x. Run alone, it fails ("Cannot resolve
-  //  symbol blub") because resolving the qualifier of `export ops.blub` re-enters itself and highlighting
-  //  caches the empty result. It passes only when earlier tests have warmed the caches. Re-enable once
-  //  the export self-recursion is fixed.
-  def _testSCL22266TypeParameters(): Unit = checkTextHasNoErrors(
+  def testSCL22266TypeParameters(): Unit = checkTextHasNoErrorsWithColdCaches(
     """
       |object Test {
       |  class Ops(i: Int):
