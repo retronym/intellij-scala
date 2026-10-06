@@ -6,12 +6,12 @@ import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, RecursionMa
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
 import org.jetbrains.plugins.scala.lang.psi.api.base.patterns.ScBindingPattern
-import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScTypeAlias, ScTypeAliasDeclaration, ScTypeAliasDefinition}
+import org.jetbrains.plugins.scala.lang.psi.api.statements.params.ScParameter
+import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScTypeAlias, ScTypeAliasDefinition}
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.ScTypedDefinition
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef._
 import org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiManager
 import org.jetbrains.plugins.scala.lang.psi.impl.toplevel.synthetic.ScSyntheticClass
-import org.jetbrains.plugins.scala.lang.psi.impl.toplevel.typedef.TypeDefinitionMembers
 import org.jetbrains.plugins.scala.lang.psi.types.nonvalue.ScTypePolymorphicType
 import org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate.ScSubstitutor
 import org.jetbrains.plugins.scala.lang.psi.types.result._
@@ -36,18 +36,15 @@ final class ScProjectionType private(val projected: ScType,
     case _ => false
   }) && super.isStable
 
-  override private[types] def designatorSingletonType: Option[ScType] = {
-    val normal = super.designatorSingletonType.map(actualSubst)
-    // scalac's `pre.memberType(sym)`: the singleton's *underlying* follows the
-    // RESOLVED member, not the static `element`. When `element` is an abstract
-    // declaration (e.g. `IGen#global: SymbolTable`) — or `None` for an object prefix —
-    // the prefix may carry a more-specific override (an anonymous-class refinement or
-    // `override object … { val global: X.this.type }`) whose type is a singleton.
-    // Use that override's type, asSeenFrom this prefix: `ScSubstitutor(projected)`
-    // rewrites the override's own and *enclosing* `this`-types onto the prefix chain
-    // (so `Global.this` becomes e.g. `NscGen.this.global`), matching scalac's asSeenFrom.
-    if (normal.exists(ScProjectionType.isSingletonLike)) normal
-    else ScProjectionType.overrideSingletonOf(this).filter(ScProjectionType.isSingletonLike).orElse(normal)
+  // scalac's `pre.memberType(sym)`: the singleton's underlying follows the member resolved
+  // on the prefix (`actual`), not the static `element`, which may be an abstract declaration
+  // (`IGen#global: SymbolTable`) overridden by a singleton-typed member
+  // (`val global: X.this.type`).
+  override private[types] def designatorSingletonType: Option[ScType] = actualElement match {
+    case _: ScObject                                          => None
+    case parameter: ScParameter if parameter.isStable         => parameter.insideParamType.toOption.map(actualSubst)
+    case definition: ScTypedDefinition if definition.isStable => definition.`type`().toOption.map(actualSubst)
+    case _                                                    => None
   }
 
   private def actualImpl(projected: ScType, updateWithProjectionSubst: Boolean)(implicit context: Context): Option[(PsiNamedElement, ScSubstitutor)] = cachedWithRecursionGuard("actualImpl", element, Option.empty[(PsiNamedElement, ScSubstitutor)], BlockModificationTracker(element), (projected, updateWithProjectionSubst)) {
@@ -116,10 +113,15 @@ final class ScProjectionType private(val projected: ScType,
 
       processor.processType(projected, resolvePlace, ScalaResolveState.empty, updateWithProjectionSubst)
 
-      processor.candidates match {
-        case Array(candidate) => candidate.element match {
+      ScProjectionType.mostSpecific(processor.candidates) match {
+        case Some(candidate) => candidate.element match {
           case candidateElement: PsiNamedElement =>
-            val thisSubstitutor = ScSubstitutor(projected, element.findContextOfType(classOf[PsiClass]).orNull)
+            if (ScProjectionType.debugMemberType && processor.candidates.length > 1)
+              System.err.println(s"[memberType] $this: ${processor.candidates.map(c => c.element.name + "@" + c.element.findContextOfType(classOf[PsiClass]).map(_.name).orNull).mkString(", ")} -> ${candidateElement.findContextOfType(classOf[PsiClass]).map(_.name).orNull}")
+            // scalac's `sym.info.asSeenFrom(pre, sym.owner)`: anchor at the *resolved* member's owner,
+            // which for an override is not the static `element`'s.
+            val anchorElement = if (element.is[PsiClass]) element else candidateElement
+            val thisSubstitutor = ScSubstitutor(projected, anchorElement.findContextOfType(classOf[PsiClass]).orNull)
             val defaultSubstitutor =
               projected match {
                 case _: ScThisType => candidate.substitutor
@@ -178,25 +180,8 @@ final class ScProjectionType private(val projected: ScType,
       case _ => ConstraintsResult.Left
     }
 
-    // Override-aware singleton collapse (scalac's `pre.memberType`). `checkDesignatorType`
-    // above uses the prefix designator's statically-declared type, which is not a
-    // singleton when that designator points at an ABSTRACT member (e.g.
-    // `SymbolLoaders#symbolTable: SymbolTable`) whose singleton-ness comes only from an
-    // override further down the prefix's class (`symbolTable: global.type`). Consult the
-    // override-aware `designatorSingletonType` to recover the underlying singleton and
-    // compare. Used only as a fallback, so it never turns a passing comparison into a
-    // failure (SCL-21947, the BrowsingLoaders.enterIfNew override-matching case).
-    def checkOverrideSingleton(proj: ScProjectionType, other: ScType): ConstraintsResult =
-      proj.designatorSingletonType match {
-        case Some(tp) if ScProjectionType.isSingletonLike(tp) => tp.equiv(other, constraints, falseUndef)
-        case _                                                => ConstraintsResult.Left
-      }
-
     val desRes = checkDesignatorType(actualElement, r)
     if (desRes.isRight) return desRes
-
-    val ovrRes = checkOverrideSingleton(this, r)
-    if (ovrRes.isRight) return ovrRes
 
     r match {
       case tpt: ScTypePolymorphicType =>
@@ -222,24 +207,12 @@ final class ScProjectionType private(val projected: ScType,
         val desRes = checkDesignatorType(proj2.actualElement, this)
         if (desRes.isRight) return desRes
 
-        val ovrRes = checkOverrideSingleton(proj2, this)
-        if (ovrRes.isRight) return ovrRes
-
         val lElement = actualElement
         val rElement = proj2.actualElement
 
         val sameElements = ScEquivalenceUtil.smartEquivalence(lElement, rElement) || {
           lElement.name == rElement.name &&
             (isEligibleForPrefixUnification(projected) || isEligibleForPrefixUnification(p1))
-        } || {
-          // A class realizing an abstract type member (e.g. `class Symbol` overriding
-          // `type Symbol >: Null`) — different PSI elements with the same name in the
-          // same linearization. Treat as equivalent when one is an abstract type alias
-          // and the other is a class, mirroring scalac's memberType. (SCL-21947)
-          lElement.name == rElement.name && (
-            (lElement.is[ScTypeAliasDeclaration] && rElement.is[PsiClass]) ||
-            (lElement.is[PsiClass] && rElement.is[ScTypeAliasDeclaration])
-          )
         }
 
         if (sameElements) projected.equiv(p1, constraints, falseUndef)
@@ -317,32 +290,38 @@ final class ScProjectionType private(val projected: ScType,
 object ScProjectionType {
 
   private val guard = RecursionManager.RecursionGuard[ScType, Nothing]("aliasProjectionGuard")
-  private val singletonGuard = RecursionManager.RecursionGuard[ScType, Nothing]("overrideSingletonGuard")
+
+  private[designator] val debugMemberType: Boolean = java.lang.Boolean.getBoolean("scala.debug.memberType")
+
+  /**
+   * scalac's `pre.member(name)` picks the most specific member; IntelliJ's resolver may
+   * return several candidates for one name (an abstract `type Symbol` and the `class Symbol`
+   * realizing it through a self type; an abstract `val global` and its override). Pick the
+   * single candidate that no other one overrides: a concrete member over an abstract one, a
+   * member of a subclass over one of its superclass. `None` when that isn't unique.
+   */
+  private def mostSpecific(candidates: Array[ScalaResolveResult]): Option[ScalaResolveResult] = candidates match {
+    case Array(c) => Some(c)
+    case Array()  => None
+    case cs =>
+      def owner(r: ScalaResolveResult): PsiClass = r.element.findContextOfType(classOf[PsiClass]).orNull
+      def concrete(r: ScalaResolveResult): Boolean = ScalaPsiUtil.isConcreteElement(r.element.nameContext)
+      def overrides(a: ScalaResolveResult, b: ScalaResolveResult): Boolean =
+        (concrete(a) && !concrete(b)) || (concrete(a) == concrete(b) && {
+          val (oa, ob) = (owner(a), owner(b))
+          oa != null && ob != null && oa != ob && oa.isInheritor(ob, /*checkDeep*/ true)
+        })
+      cs.filterNot(b => cs.exists(a => (a ne b) && overrides(a, b))) match {
+        case Array(c) => Some(c)
+        case _        => None
+      }
+  }
 
   private[designator] def isSingletonLike(t: ScType): Boolean = t match {
     case _: ScThisType      => true
     case d: DesignatorOwner => d.isSingleton
     case _                  => false
   }
-
-  /** Override-aware underlying of a stable val/object-path projection (scalac's
-   *  `pre.memberType(sym)`): resolve the most-specific member of `proj.element.name`
-   *  on the prefix's class, take its type, and asSeenFrom the prefix. */
-  private[designator] def overrideSingletonOf(proj: ScProjectionType): Option[ScType] =
-    proj.element match {
-      case named: ScTypedDefinition =>
-        singletonGuard.doPreventingRecursion(proj) {
-          implicit val ctx: Context = Context(proj.element)
-          proj.projected.extractClass.flatMap { cls =>
-            TypeDefinitionMembers.getSignatures(cls).forName(named.name).iterator
-              .map(_.namedElement)
-              .collect { case td: ScTypedDefinition if td.isStable => td }
-              .flatMap(e => e.`type`().toOption.iterator.map(ScSubstitutor(proj.projected, ScSubstitutor.declarationAnchor(e)).apply))
-              .collectFirst { case t if isSingletonLike(t) => t }
-          }
-        }.flatten
-      case _ => None
-    }
 
   /**
    * Collapse a stable val-path projection to the singleton it is known to be, to a
