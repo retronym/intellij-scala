@@ -346,26 +346,9 @@ object ScProjectionType {
     case _ => tp
   }
 
-  /**
-   * The singleton type of the stable path `proj`: its own (override-aware)
-   * `designatorSingletonType`, or else, when the member resolved to an abstract
-   * declaration (`Analyzer#global: Global`), the singleton its prefix's refinement
-   * declares (`new { val global: Global.this.type } with Analyzer`).
-   */
+  /** The singleton type of the stable path `proj`: its override-aware `designatorSingletonType`. */
   private def projectionSingleton(proj: ScProjectionType): Option[ScType] =
-    proj.designatorSingletonType.filter(isSingletonLike).orElse {
-      proj.projected match {
-        case pp: ScProjectionType =>
-          pp.designatorSingletonType match {
-            case Some(ct: ScCompoundType) =>
-              ct.signatureMap.iterator.collectFirst {
-                case (sig, tpe) if sig.name == proj.element.name && isSingletonLike(proj.actualSubst(tpe)) => proj.actualSubst(tpe)
-              }
-            case _ => None
-          }
-        case _ => None
-      }
-    }
+    proj.designatorSingletonType.filter(isSingletonLike)
 
   def simpleAliasProjection(p: ScProjectionType): ScType = {
     p.actual() match {
