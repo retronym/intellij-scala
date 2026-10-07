@@ -18,14 +18,17 @@ import org.junit.Assert._
  */
 class SubstitutorInvariantsTest extends ScalaLightCodeInsightFixtureTestCase {
 
+  private var savedModes: Map[Rule, Mode] = Map.empty
+
   override def setUp(): Unit = {
     super.setUp()
+    savedModes = Rule.all.map(r => r -> SubstitutorInvariants.mode(r)).toMap
     SubstitutorInvariants.setAllModes(Mode.Record)
     SubstitutorInvariants.reset()
   }
 
   override def tearDown(): Unit = {
-    SubstitutorInvariants.setAllModes(Mode.Off)
+    savedModes.foreach { case (r, m) => SubstitutorInvariants.setMode(r, m) }
     super.tearDown()
   }
 

@@ -18,12 +18,15 @@ import scala.collection.mutable
  * (`lean/AsSeenFrom/Chain.lean`). Each [[Rule]] names the theorem whose hypothesis it checks; a violation means
  * the chain is outside the model, not that its result is necessarily wrong.
  *
- * Link order. A substitutor applies its updates in array order: `a.followed(b)` is `b ∘ a`. The processors
- * build `ScSubstitutor(fromType, owner(m)).followed(sig_C(m)).followed(state)`, so the use-site this-link runs
- * FIRST, on the declared type, and the cached signature substitutor's `(C.this, owner(m))` link runs after it,
- * on whatever the first link left alone. (The design note of the PR assumes the opposite order,
- * `sig_C >> fromType`; its C1 formulation, [[Rule.AdjacentAnchors]] / [[Rule.RunningAnchor]], presupposes that
- * shape and fires on the ordinary member chain here, which is why those two are off by default.)
+ * Link order. A substitutor applies its updates in array order: `a.followed(b)` is `b ∘ a`. Both orders of
+ * use-site link and signature substitutor occur. `ScalaResolveState.substitutorWithThisType(owner(m))` PREPENDS
+ * `(fromType, owner(m))`, so there the use-site link runs first, on the declared type, and `sig_C(m)`'s
+ * `(C.this, owner(m))` runs after it on whatever it left alone. `TypeDefinitionMembers.processDeclarations`
+ * puts `sig_C(m)` BEFORE the state's substitutor, so a this-link that arrives through resolve state
+ * (`BaseProcessor` on a self type or a value projection, `ScProjectionType.actual`) runs after the signature
+ * substitutor, anchored at `owner(m)` rather than at `C`: the `sig_C >> fromType` shape of the design note.
+ * The C1 rules ([[Rule.AdjacentAnchors]], [[Rule.RunningAnchor]]) fire on both shapes by the hundreds of
+ * thousands over the type-inference suites, so they are off by default; treat them as a census, not a gate.
  *
  * Modes. Every rule is `off` in production. In unit tests the cheap rules default to `record` (count, keep a
  * bounded set of sample messages; see [[report]]), the chain-walking ones to `off`. Override globally with
@@ -213,13 +216,15 @@ object SubstitutorInvariants {
   private[recursiveUpdate] def fixedTarget(link: ThisTypeSubstitution, subst: ScSubstitutor): Unit =
     if (enabled(Rule.FixedTarget) && !checking.get) {
       val leaves = thisLeaves(link.target)
-      // Only a this-leaf of the target that the walk can reach is at risk (`asf_eq_of_fixed` otherwise); an
-      // anchorless link can reach any of them.
+      // Only a this-leaf of the target that the walk can reach is at risk (`asf_eq_of_fixed` otherwise).
+      // Anchorless links are A6's business and have no `Context` to check under.
       val atRisk =
-        leaves.nonEmpty && (link.seenFromClass == null || leaves.exists(th => ownerChainContains(link.seenFromClass, th.element)))
+        leaves.nonEmpty && link.seenFromClass != null && leaves.exists(th => ownerChainContains(link.seenFromClass, th.element))
       if (atRisk) withoutNestedChecks {
         val res = subst(link.target)
-        if (res != link.target)
+        // `==` first (cheap, exact); `equiv` tolerates a re-spelling of the same path (`Obj.v` as a
+        // designator or as a projection).
+        if (res != link.target && !res.equiv(link.target)(using Context(link.seenFromClass)))
           violated(Rule.FixedTarget, s"[$link] maps its own target to $res")
       }
     }
