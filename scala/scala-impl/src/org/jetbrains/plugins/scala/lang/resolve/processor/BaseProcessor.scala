@@ -178,6 +178,8 @@ abstract class BaseProcessor(val kinds: Set[ResolveTargets.Value])
       }
     }
 
+    org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate.AsfStats.inc("resolve.processType")
+
     t match {
       case ScThisType(clazz) =>
         clazz.selfType match {

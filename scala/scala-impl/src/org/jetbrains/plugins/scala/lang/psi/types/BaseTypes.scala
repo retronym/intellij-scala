@@ -125,8 +125,21 @@ object BaseTypes {
    * different arguments, the contributions are merged ([[mergeSameClass]]), so the
    * result is deterministic, unlike `iterator(t).find(_.extractClass.contains(clazz))`.
    */
-  def baseType(t: ScType, clazz: PsiClass)(implicit context: Context): Option[ScType] = {
-    val sameClass = (Iterator(t) ++ iterator(t)).filter(_.extractClass.contains(clazz)).toList
+  def baseType(t: ScType, clazz: PsiClass)(implicit context: Context): Option[ScType] =
+    if (recursiveUpdate.AsfStats.cacheBaseType) {
+      val k = (t, clazz)
+      val hit = recursiveUpdate.AsfStats.baseTypeMemo.get(k)
+      if (hit != null) hit.asInstanceOf[Option[ScType]]
+      else { val r = baseTypeUncached(t, clazz); recursiveUpdate.AsfStats.baseTypeMemo.put(k, r); r }
+    } else baseTypeUncached(t, clazz)
+
+  private def baseTypeUncached(t: ScType, clazz: PsiClass)(implicit context: Context): Option[ScType] =
+    recursiveUpdate.AsfStats.timed("baseType") {
+    recursiveUpdate.AsfStats.key("baseType", (t, clazz))
+    var visited = 0
+    val sameClass = (Iterator(t) ++ iterator(t)).map { x => visited += 1; x }.filter(_.extractClass.contains(clazz)).toList
+    recursiveUpdate.AsfStats.hist("baseType.visited", visited)
+    if (sameClass.lengthCompare(1) > 0) recursiveUpdate.AsfStats.inc("baseType.merged")
     if (sameClass.isEmpty) None
     else Some(mergeSameClass(sameClass, clazz))
   }
@@ -191,6 +204,7 @@ object BaseTypes {
    */
   private def supersOf(tp: ScType, seenAliases: mutable.Set[ScTypeAlias])
                       (implicit context: Context): Seq[ScType] = {
+    recursiveUpdate.AsfStats.inc("baseTypes.supersOf")
     // `seen` breaks singleton-widening cycles (e.g. an object whose
     // designatorSingletonType is its own type): a repeat falls back to ClassType.
     @tailrec

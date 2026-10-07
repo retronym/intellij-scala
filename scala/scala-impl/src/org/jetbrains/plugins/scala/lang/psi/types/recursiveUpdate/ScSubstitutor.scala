@@ -59,6 +59,12 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
     if (cacheSubstitutions)
       cache ++= this.allTypeParamsMap
 
+    if (AsfStats.enabled && substitutions.nonEmpty) {
+      AsfStats.hist("apply.k", substitutions.length)
+      AsfStats.hist("apply.thisLinks", substitutions.count(_.isInstanceOf[ThisTypeSubstitution]))
+      if (hasNonLeafSubstitutions) AsfStats.inc("apply.unfused") else AsfStats.inc("apply.fused")
+      AsfStats.timed("apply")(recursiveUpdateImpl(`type`)(using SubtypeUpdaterNoVariance, Set.empty))
+    } else
     recursiveUpdateImpl(`type`)(using SubtypeUpdaterNoVariance, Set.empty)
   }
 
@@ -74,6 +80,7 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
     if (fromIndex >= substitutions.length || visited(scType)) scType
     else {
       val currentUpdate = substitutions(fromIndex)
+      AsfStats.inc("walk.updateChecks")
 
       currentUpdate(scType, variance) match {
         case ReplaceWith(res) =>
@@ -82,6 +89,7 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
         case ProcessSubtypes =>
           val newVisited = if (isLazySubtype) visited + scType else visited
 
+          AsfStats.inc("walk.processSubtypes")
           if (hasNonLeafSubstitutions) {
             val withCurrentUpdate = subtypeUpdater.updateSubtypes(scType, variance, ScSubstitutor(currentUpdate))(using newVisited)
             next.recursiveUpdateImpl(withCurrentUpdate, variance)(using subtypeUpdater, Set.empty)
@@ -109,6 +117,7 @@ final class ScSubstitutor private(_substitutions: Array[Update],   //Array is us
         LOG.error(s"Too large substitutors concatenated (of size $thisLength and $otherLength")
       }
 
+      AsfStats.hist("followed.len", newLength)
       val newArray = new Array[Update](newLength)
       substitutions.copyToArray(newArray, 0)
       other.substitutions.copyToArray(newArray, thisLength)
@@ -216,7 +225,8 @@ object ScSubstitutor {
   def apply(updateThisType: ScType, @Nullable seenFromClass: PsiClass): ScSubstitutor =
     if (seenFromClass == null) ScSubstitutor.empty
     else {
-      val link  = ThisTypeSubstitution(ThisTypeSubstitution.canonicalizeTarget(updateThisType), seenFromClass)
+      AsfStats.inc("link.created")
+      val link  = ThisTypeSubstitution(AsfStats.timed("link.canonicalize")(ThisTypeSubstitution.canonicalizeTarget(updateThisType)), seenFromClass)
       val subst = ScSubstitutor(link)
       SubstitutorInvariants.fixedTarget(link, subst)
       subst

@@ -358,6 +358,7 @@ object TypeDefinitionMembers {
 
     def process(signature: Signature): Boolean =
       if (signature.namedElement.isValid) {
+        org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate.AsfStats.inc("resolve.candidateSignatures")
         val withSubst                 = state.withSubstitutor(seenFromSelfTypeOwner(signature).followed(subst))
         val withRenamed               = withSubst.withRename(signature.renamed)
         val intersectedReturnType     = signature.asOptionOf[TermSignature].flatMap(_.intersectedReturnType)

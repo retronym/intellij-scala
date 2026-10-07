@@ -110,8 +110,9 @@ trait ResolveStateOps extends Any {
    * to climb, so `pre` contributes nothing.
    */
   def substitutorWithThisType(@Nullable seenFromClass: PsiClass): ScSubstitutor =
+    { org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate.AsfStats.inc("resolve.substitutorWithThisType")
     if (seenFromClass == null) substitutor
-    else fromType.fold(substitutor)(substitutor.followUpdateThisType(_, seenFromClass))
+    else fromType.fold(substitutor)(substitutor.followUpdateThisType(_, seenFromClass)) }
 
   def fromType: Option[ScType] =
     option(FROM_TYPE_KEY)

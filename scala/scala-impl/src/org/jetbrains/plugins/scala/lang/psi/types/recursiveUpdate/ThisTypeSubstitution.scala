@@ -34,7 +34,15 @@ private case class ThisTypeSubstitution(target: ScType, seenFromClass: PsiClass)
   override protected val subst: PartialFunction[LeafType, ScType] = {
     case th: ScThisType =>
       TypeRecursionGuard.nestedSubstitution(th, s"$th with $this") {
-        val res = doUpdateThisTypeFromClass(th, target, seenFromClass)
+        AsfStats.key("thisWalk", (th, target, seenFromClass))
+        val res =
+          if (AsfStats.cacheWalk) {
+            val k = (th, target, seenFromClass)
+            val hit = AsfStats.walkMemo.get(k)
+            if (hit != null) hit.asInstanceOf[ScType]
+            else { val r = AsfStats.timed("thisWalk")(doUpdateThisTypeFromClass(th, target, seenFromClass)); AsfStats.walkMemo.put(k, r); r }
+          } else AsfStats.timed("thisWalk")(doUpdateThisTypeFromClass(th, target, seenFromClass))
+        if (res ne th) AsfStats.inc("thisWalk.rewrote")
         if (SubstitutorInvariants.enabled(SubstitutorInvariants.Rule.NoReentry) && (res ne th) && embedsRewrittenThis(res, th))
           SubstitutorInvariants.noReentry(this, th, res)
         res
@@ -62,7 +70,7 @@ private case class ThisTypeSubstitution(target: ScType, seenFromClass: PsiClass)
   /** Narrows `thisTp` against `target`, climbing `target`'s prefix while it doesn't. */
   @tailrec
   private def doUpdateThisType(thisTp: ScThisType, target: ScType): ScType =
-    if (isMoreNarrow(target, thisTp, Set.empty)) target
+    if ({ AsfStats.inc("thisWalk.prefixSteps"); isMoreNarrow(target, thisTp, Set.empty) }) target
     else {
       containingClassType(target) match {
         case Some(targetContext) => doUpdateThisType(thisTp, targetContext)
@@ -79,6 +87,7 @@ private case class ThisTypeSubstitution(target: ScType, seenFromClass: PsiClass)
   /** The anchored walk: scalac's `thisTypeAsSeen`, climbing `clazz`'s owner chain in step with `target`. */
   @tailrec
   private def doUpdateThisTypeFromClass(thisTp: ScThisType, target: ScType, clazz: PsiClass): ScType =
+    if ({ AsfStats.inc("thisWalk.ownerSteps"); false }) thisTp else
     // scalac's `toPrefix` returns `pre` as soon as the this-type's class is a subclass of
     // the cursor and `pre` widens to that class, before consulting `pre baseType clazz`.
     // Without this, a this-type declared in a proper superclass of the cursor is walked
@@ -188,6 +197,7 @@ private case class ThisTypeSubstitution(target: ScType, seenFromClass: PsiClass)
 
   @tailrec
   private def isMoreNarrow(target: ScType, thisTp: ScThisType, visited: Set[PsiElement])(implicit context: Context): Boolean = {
+    AsfStats.inc("isMoreNarrow.steps")
     extractAll(target) match {
       case Some(pat: ScBindingPattern) =>
         if (visited.contains(pat)) false
@@ -273,5 +283,13 @@ private object ThisTypeSubstitution {
    * (`analyzer.global.analyzer.global...`) until the no-self-embedding rule cuts them off.
    */
   def canonicalizeTarget(tp: ScType): ScType =
-    TypeRecursionGuard.nestedSubstitution(tp, s"canonicalizing $tp")(ScProjectionType.collapseSingletonPath(tp))
+    if (AsfStats.cacheCanon) {
+      val hit = AsfStats.canonMemo.get(tp)
+      if (hit != null) hit.asInstanceOf[ScType]
+      else {
+        val r = AsfStats.timed("canonicalize")(TypeRecursionGuard.nestedSubstitution(tp, s"canonicalizing $tp")(ScProjectionType.collapseSingletonPath(tp)))
+        AsfStats.canonMemo.put(tp, r); r
+      }
+    } else
+    AsfStats.timed("canonicalize")(TypeRecursionGuard.nestedSubstitution(tp, s"canonicalizing $tp")(ScProjectionType.collapseSingletonPath(tp)))
 }
