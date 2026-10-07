@@ -6,7 +6,7 @@ import com.intellij.openapi.util.Key
 import com.intellij.psi._
 import com.intellij.psi.tree.IElementType
 import org.jetbrains.plugins.scala.JavaArrayFactoryUtil.ScFunctionDefinitionFactory
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions.{StubBasedExt, ifReadAllowed}
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenTypes
 import org.jetbrains.plugins.scala.lang.parser.ScalaElementType.FUNCTION_DEFINITION
@@ -108,7 +108,7 @@ class ScFunctionDefinitionImpl[S <: ScFunctionDefinition](stub: ScFunctionStub[S
 
   override private[psi] def superMethodCall: ScExpression = _superMethodCall()
 
-  private val _superMethodCall = cached("superMethodCall", BlockModificationTracker(this), () => {
+  private val _superMethodCall = cached(cacheId[this.type, "superMethodCall"], BlockModificationTracker(this), () => {
     val signatureArguments = signatureClauses.map {
       case TypeClause(clause) =>
         clause.typeParameters.map(_.name).mkString("[", ", ", "]")

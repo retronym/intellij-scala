@@ -5,7 +5,7 @@ import com.intellij.openapi.project.{Project, ProjectUtil}
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.psi.PsiFile
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.inReadAction
 import org.jetbrains.plugins.scala.project.ProjectPsiFileExt
 import org.jetbrains.sbt.SbtUtil
@@ -47,7 +47,7 @@ object SbtProjectUtil {
 
   def cachedModuleForPsiFile(file: PsiFile): Option[Module] =
     file.module.orElse {
-      cachedInUserData("moduleForAnyTypeOfFile", file, ProjectRootManager.getInstance(file.getProject)) {
+      cachedInUserData(cacheId[this.type, "moduleForAnyTypeOfFile"], file, ProjectRootManager.getInstance(file.getProject)) {
         // assuming that most of the time, the cached value will be read instead of recomputed
         inReadAction(Option(ModuleUtilCore.findModuleForPsiElement(file)))
       }

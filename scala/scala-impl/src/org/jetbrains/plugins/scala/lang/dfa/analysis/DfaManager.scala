@@ -8,7 +8,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.lang.dfa.analysis.framework.{ScalaDfaListener, ScalaDfaResult}
 import org.jetbrains.plugins.scala.lang.dfa.analysis.invocations.interprocedural.AnalysedMethodInfo
 import org.jetbrains.plugins.scala.lang.dfa.controlFlow.transform.ResultReq
@@ -101,7 +101,7 @@ object DfaManager {
   private final class DfaCacheService(project: Project) {
     private val cachedDfaResults: () => ConcurrentHashMap[ScFunctionDefinition, Future[Option[ScalaDfaResult]]] =
       cached(
-        "DfaManager.dfaCaches",
+        cacheId[this.type, "DfaManager.dfaCaches"],
         ModTracker.physicalPsiChange(project),
         () => new ConcurrentHashMap[ScFunctionDefinition, Future[Option[ScalaDfaResult]]]()
       )

@@ -4,7 +4,7 @@ import com.intellij.lang.{ASTNode, LanguageNamesValidation}
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.IncorrectOperationException
 import org.jetbrains.plugins.scala.ScalaBundle
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.api.base.ScInterpolatedStringLiteral
 import org.jetbrains.plugins.scala.lang.psi.api.expr.{ScMethodCall, ScReferenceExpression}
@@ -58,7 +58,7 @@ final class ScInterpolatedStringLiteralImpl(node: ASTNode,
 
   override protected def endQuote: String = super.startQuote
 
-  override def desugaredExpression: Option[(ScReferenceExpression, ScMethodCall)] = cachedInUserData("desugaredExpression", this, BlockModificationTracker(this), Tuple1(ScalaApplicationSettings.PRECISE_TEXT)) {
+  override def desugaredExpression: Option[(ScReferenceExpression, ScMethodCall)] = cachedInUserData(cacheId[this.type, "desugaredExpression"], this, BlockModificationTracker(this), Tuple1(ScalaApplicationSettings.PRECISE_TEXT)) {
     (referenceText, getContext) match {
       case (methodName, context) if context != null &&
         hasValidClosingQuotes &&

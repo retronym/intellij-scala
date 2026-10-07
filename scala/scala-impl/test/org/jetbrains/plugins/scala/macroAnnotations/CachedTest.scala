@@ -1,13 +1,13 @@
 package org.jetbrains.plugins.scala.macroAnnotations
 
 import org.jetbrains.plugins.scala.caches.stats.Tracer
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached}
 import org.junit.Assert._
 
 class CachedTest extends CachedTestBase {
   def testNoParametersSingleThread(): Unit = {
     class Foo extends Managed {
-      val currentTime: () => Long = cached("currentTime", ModTracker.physicalPsiChange(getProject), () => {
+      val currentTime: () => Long = cached(cacheId[this.type, "currentTime"], ModTracker.physicalPsiChange(getProject), () => {
         System.currentTimeMillis()
       })
     }
@@ -30,7 +30,7 @@ class CachedTest extends CachedTestBase {
 
   def testModificationTrackers(): Unit = {
     object Foo extends Managed {
-      val currentTime: () => Long = cached("currentTime", ModTracker.physicalPsiChange(getProject), () => {
+      val currentTime: () => Long = cached(cacheId[this.type, "currentTime"], ModTracker.physicalPsiChange(getProject), () => {
         System.currentTimeMillis()
       })
     }
@@ -44,7 +44,7 @@ class CachedTest extends CachedTestBase {
 
   def testWithParameters(): Unit = {
     object Foo extends Managed {
-      val currentTime: (Int, Int) => Long = cached("currentTime", ModTracker.physicalPsiChange(getProject), (a, b) => {
+      val currentTime: (Int, Int) => Long = cached(cacheId[this.type, "currentTime"], ModTracker.physicalPsiChange(getProject), (a, b) => {
         System.currentTimeMillis()
       })
     }
@@ -63,14 +63,14 @@ class CachedTest extends CachedTestBase {
 
   def testTracer(): Unit = {
     object Foo extends Managed {
-      val currentTime: () => Long = cached("currentTime", ModTracker.physicalPsiChange(getProject), () => {
+      val currentTime: () => Long = cached(cacheId[this.type, "currentTime"], ModTracker.physicalPsiChange(getProject), () => {
         System.currentTimeMillis()
       })
     }
 
     Tracer.clearAll()
 
-    checkTracer(lambdaRegex("CachedTest$Foo$7$", "currentTime"), totalCount = 3, actualCount = 2) {
+    checkTracer("org$jetbrains$plugins$scala$macroAnnotations$CachedTest$testTracer$Foo$currentTime$cacheKey", "Foo.currentTime", totalCount = 3, actualCount = 2) {
       Foo.currentTime()
       Foo.currentTime()
       Foo.dropCaches()

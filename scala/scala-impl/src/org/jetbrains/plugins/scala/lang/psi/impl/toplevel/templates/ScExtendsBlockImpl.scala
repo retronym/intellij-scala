@@ -3,7 +3,7 @@ package org.jetbrains.plugins.scala.lang.psi.impl.toplevel.templates
 import com.intellij.lang.ASTNode
 import com.intellij.psi.PsiClass
 import org.jetbrains.plugins.scala.JavaArrayFactoryUtil.{ScDerivesClauseFactory, ScTemplateParentsFactory}
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cached, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cacheId, cached, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenTypes
 import org.jetbrains.plugins.scala.lang.parser.ScalaElementType._
@@ -38,7 +38,7 @@ class ScExtendsBlockImpl private(stub: ScExtendsBlockStub, node: ASTNode)
 
   override def templateBody: Option[ScTemplateBody] = _templateBody()
 
-  private val _templateBody = cached("templateBody", ModTracker.anyScalaPsiChange, () => {
+  private val _templateBody = cached(cacheId[this.type, "templateBody"], ModTracker.anyScalaPsiChange, () => {
     def childStubTemplate(stub: ScExtendsBlockStub) =
       Option(stub.findChildStubByElementType(TEMPLATE_BODY))
         .map(_.getPsi.asInstanceOf[ScTemplateBody])
@@ -62,7 +62,7 @@ class ScExtendsBlockImpl private(stub: ScExtendsBlockStub, node: ASTNode)
       _.`type`().toOption
     }
 
-  override def superTypes: List[ScType] = cachedInUserData("superTypes", this, ModTracker.libraryAware(this)) {
+  override def superTypes: List[ScType] = cachedInUserData(cacheId[this.type, "superTypes"], this, ModTracker.libraryAware(this)) {
     val buffer = ArrayBuffer.empty[ScType]
 
     val stdTypes = projectContext.stdTypes
@@ -175,7 +175,7 @@ class ScExtendsBlockImpl private(stub: ScExtendsBlockStub, node: ASTNode)
 
   def syntheticTypeElements: Seq[ScTypeElement] = _syntheticTypeElements()
 
-  private val _syntheticTypeElements = cached("syntheticTypeElements", BlockModificationTracker(this), () => {
+  private val _syntheticTypeElements = cached(cacheId[this.type, "syntheticTypeElements"], BlockModificationTracker(this), () => {
     if (templateParents.nonEmpty) Seq.empty //will be handled separately
     else getContext match {
       case td: ScTypeDefinition => SyntheticMembersInjector.injectSupers(td)
@@ -183,7 +183,7 @@ class ScExtendsBlockImpl private(stub: ScExtendsBlockStub, node: ASTNode)
     }
   })
 
-  override def supers: Seq[PsiClass] = cachedInUserData("supers", this, ModTracker.libraryAware(this)) {
+  override def supers: Seq[PsiClass] = cachedInUserData(cacheId[this.type, "supers"], this, ModTracker.libraryAware(this)) {
     val typeElements = templateParents.fold(syntheticTypeElements) {
       _.allTypeElements
     }

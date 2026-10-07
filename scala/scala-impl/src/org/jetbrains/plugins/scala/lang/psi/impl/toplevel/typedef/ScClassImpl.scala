@@ -6,7 +6,7 @@ import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.DumbService
 import com.intellij.psi._
 import com.intellij.psi.tree.IElementType
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.externalLibraries.contextApplied.{ContextApplied, ContextAppliedUtil}
 import org.jetbrains.plugins.scala.icons.Icons
@@ -56,7 +56,7 @@ class ScClassImpl(stub: ScTemplateDefinitionStub[ScClass],
   import com.intellij.psi.{PsiElement, ResolveState}
 
   override def syntheticContextAppliedDefs: Seq[ScalaPsiElement] =
-    cachedInUserData("syntheticContextAppliedDefs", this, BlockModificationTracker(this)) {
+    cachedInUserData(cacheId[this.type, "syntheticContextAppliedDefs"], this, BlockModificationTracker(this)) {
       ContextAppliedUtil.createSyntheticElementsFor(
         this,
         this,
@@ -147,7 +147,7 @@ class ScClassImpl(stub: ScTemplateDefinitionStub[ScClass],
   override def getSyntheticImplicitMethod: Option[ScFunction] =
     if (!hasModifierProperty("implicit") || constructor.isEmpty) None
     else
-      cachedInUserData("getSyntheticImplicitMethod", this, ModTracker.libraryAware(this)) {
+      cachedInUserData(cacheId[this.type, "getSyntheticImplicitMethod"], this, ModTracker.libraryAware(this)) {
         try {
           val method = ScalaPsiElementFactory.createMethodWithContext(implicitMethodText, this.getContext, this)
           method.syntheticNavigationElement = this

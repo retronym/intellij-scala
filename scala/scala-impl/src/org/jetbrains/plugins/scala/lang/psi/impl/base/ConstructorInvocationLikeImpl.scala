@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala.lang.psi.impl.base
 
 import com.intellij.psi.PsiElement
 import org.jetbrains.annotations.Nullable
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.api.base.{ConstructorInvocationLike, JavaConstructor, ScalaConstructor}
 import org.jetbrains.plugins.scala.lang.psi.api.expr.{ScAssignment, ScExpression, ScReferenceExpression}
@@ -18,7 +18,7 @@ trait ConstructorInvocationLikeImpl extends ConstructorInvocationLike {
 
   override def matchedParametersByClauses: Seq[Seq[(ScExpression, Parameter)]] = _matchedParametersByClauses()
 
-  private val _matchedParametersByClauses = cached("matchedParametersByClauses", BlockModificationTracker(this), () => {
+  private val _matchedParametersByClauses = cached(cacheId[this.type, "matchedParametersByClauses"], BlockModificationTracker(this), () => {
     resolveConstructor() match {
       case ScalaConstructor(constr) =>
         val paramClauses = constr.effectiveParameterClauses

@@ -4,7 +4,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.psi._
 import com.intellij.util.SlowOperations
-import org.jetbrains.plugins.scala.caches.measure
+import org.jetbrains.plugins.scala.caches.{cacheId, measure}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.macros.evaluator.{MacroContext, ScalaMacroEvaluator}
 import org.jetbrains.plugins.scala.lang.psi.ElementScope
@@ -243,7 +243,7 @@ class ImplicitCollector(
    *
    * If return-type extraction is inconclusive, we conservatively return `true` to avoid false negatives.
    */
-  private def canContainTargetMethod(srr: ScalaResolveResult): Boolean = measure("ImplicitCollector.canContainTargetMethod") {
+  private def canContainTargetMethod(srr: ScalaResolveResult): Boolean = measure(cacheId[this.type, "ImplicitCollector.canContainTargetMethod"]) {
     withExtensions && !srr.isExtensionCall && !hasExplicitClause(srr) && {
       val targetType = srr.element match {
         case param: ScParameter => param.insideParamType.toOption
@@ -1102,7 +1102,7 @@ class ImplicitCollector(
     hadDependents:          Boolean,
     constraints:            ConstraintSystem,
     isLeadingImplicitsCase: Boolean
-  ): Option[ScalaResolveResult] = measure("ImplicitCollector.adaptAndApplyToImplicitArgsWithDivergenceChecker") {
+  ): Option[ScalaResolveResult] = measure(cacheId[this.type, "ImplicitCollector.adaptAndApplyToImplicitArgsWithDivergenceChecker"]) {
     def compute(): Option[ScalaResolveResult] = {
       methodType match {
         case None =>
@@ -1196,7 +1196,7 @@ class ImplicitCollector(
     checkFast:                         Boolean,
     typeParams:                        Seq[ScTypeParam],
     allowExtensionReceiverConversions: Boolean = true,
-  ): Option[ScalaResolveResult] = measure("ImplicitCollector.checkFunctionByType") {
+  ): Option[ScalaResolveResult] = measure(cacheId[this.type, "ImplicitCollector.checkFunctionByType"]) {
     implicit val elementScope: ElementScope = c.element.elementScope
 
     val fun = c.element.asInstanceOf[ScFunction]

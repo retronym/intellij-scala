@@ -4,7 +4,7 @@ import com.intellij.codeInsight.runner.JavaMainMethodProvider
 import com.intellij.psi.impl.PsiClassImplUtil
 import com.intellij.psi.util.PsiMethodUtil
 import com.intellij.psi.{PsiClass, PsiElement, PsiMethod}
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenTypes
 import org.jetbrains.plugins.scala.lang.psi.api.base.ScAnnotation
@@ -66,7 +66,7 @@ object ScalaMainMethodUtil {
   def findScala2MainMethod(obj: ScObject): Option[PsiMethod] = {
     if (!obj.isTopLevel) None
     else {
-      cachedInUserData("findScala2MainMethod", obj, BlockModificationTracker(obj)) {
+      cachedInUserData(cacheId[this.type, "findScala2MainMethod"], obj, BlockModificationTracker(obj)) {
         //NOTE: PsiClassWrapper is used in order PsiMethodUtil.isMainMethod can detect main method from base class
         // otherwise some of the conditions doesn't hold (AFAIR it can't check the presence of static modifier)
         val objWrapper = new PsiClassWrapper(obj, obj.qualifiedName, obj.name)

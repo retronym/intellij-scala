@@ -7,7 +7,7 @@ import com.intellij.psi.impl.IncompleteModelUtil
 import com.intellij.psi.impl.source.DummyHolder
 import com.intellij.psi.{PsiComment, PsiElement, PsiFile, PsiWhiteSpace}
 import org.jetbrains.annotations.TestOnly
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.isUnitTestMode
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaFile
@@ -66,7 +66,7 @@ object HighlightingAdvisor {
   }
 
   private def isInIgnoredRange(element: PsiElement, file: PsiFile): Boolean = {
-    val ignoredRanges = cachedInUserData("isInIgnoredRange.ignoredRanges", file, file.getManager.getModificationTracker) {
+    val ignoredRanges = cachedInUserData(cacheId[this.type, "isInIgnoredRange.ignoredRanges"], file, file.getManager.getModificationTracker) {
       val chars = file.charSequence
       val indexes = mutable.ArrayBuffer.empty[Int]
       var lastIndex = 0

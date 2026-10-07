@@ -1,7 +1,7 @@
 package org.jetbrains.plugins.scala.lang.psi.api.base.types
 
 import org.jetbrains.plugins.scala.ScalaBundle
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions.{PsiElementExt, ifReadAllowed}
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenTypes
 import org.jetbrains.plugins.scala.lang.psi.api.base.ScMethodLike
@@ -26,7 +26,7 @@ trait ScTypeElement extends ScalaPsiElement with Typeable {
 
   private[types] def getType: TypeResult =
     cachedWithRecursionGuard(
-      "ScTypeElement.getType",
+      cacheId[this.type, "ScTypeElement.getType"],
       this,
       Failure(ScalaBundle.message("recursive.type.of.type.element")),
       BlockModificationTracker(this)

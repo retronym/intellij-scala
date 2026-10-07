@@ -26,7 +26,7 @@ import com.intellij.xdebugger.frame.XStackFrame
 import com.sun.jdi._
 import com.sun.jdi.request.ClassPrepareRequest
 import org.jetbrains.annotations.{NotNull, Nullable}
-import org.jetbrains.plugins.scala.caches.{ScalaShortNamesCacheManager, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ScalaShortNamesCacheManager, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.debugger.ScalaPositionManager._
 import org.jetbrains.plugins.scala.debugger.evaluation.ScalaEvaluatorBuilderUtil
 import org.jetbrains.plugins.scala.debugger.evaluation.evaluator.ScalaCompilingEvaluator
@@ -796,7 +796,7 @@ object ScalaPositionManager {
     }
 
     //stored in `file`, invalidated on `file` change
-    val map: ConcurrentIntObjectMap[Seq[PsiElement]] = cachedInUserData("positionsOnLine.map", file, file) {
+    val map: ConcurrentIntObjectMap[Seq[PsiElement]] = cachedInUserData(cacheId[this.type, "positionsOnLine.map"], file, file) {
       ConcurrentCollectionFactory.createConcurrentIntObjectMap()
     }
 

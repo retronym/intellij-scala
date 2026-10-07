@@ -3,7 +3,7 @@ package org.jetbrains.plugins.scala.macroAnnotations
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.UserDataHolder
 import com.intellij.psi.util.PsiModificationTracker
-import org.jetbrains.plugins.scala.caches.{ProjectUserDataHolder, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ProjectUserDataHolder, cacheId, cachedInUserData}
 import org.junit.Assert._
 
 // TODO currentTimeMillis -> { counter += 1; counter }
@@ -12,7 +12,7 @@ class CachedInUserDataTest extends CachedWithRecursionGuardTestBase {
   def testSimple(): Unit = {
     val element = new CachedMockPsiElement()
 
-    def currentTime() = cachedInUserData("testSimple.currentTime", element, PsiModificationTracker.MODIFICATION_COUNT) {
+    def currentTime() = cachedInUserData(cacheId[this.type, "testSimple.currentTime"], element, PsiModificationTracker.MODIFICATION_COUNT) {
       System.currentTimeMillis()
     }
 
@@ -29,8 +29,8 @@ class CachedInUserDataTest extends CachedWithRecursionGuardTestBase {
   def testMultipleKeys(): Unit = {
     val element = new CachedMockPsiElement()
 
-    val value1 = cachedInUserData("testMultipleKeys.method1", element, PsiModificationTracker.MODIFICATION_COUNT)(1)
-    val value2 = cachedInUserData("testMultipleKeys.method2", element, PsiModificationTracker.MODIFICATION_COUNT)(2)
+    val value1 = cachedInUserData(cacheId[this.type, "testMultipleKeys.method1"], element, PsiModificationTracker.MODIFICATION_COUNT)(1)
+    val value2 = cachedInUserData(cacheId[this.type, "testMultipleKeys.method2"], element, PsiModificationTracker.MODIFICATION_COUNT)(2)
 
     assertNotEquals(value1, value2)
   }
@@ -39,7 +39,7 @@ class CachedInUserDataTest extends CachedWithRecursionGuardTestBase {
   def testWithParameters(): Unit = {
     val element = new CachedMockPsiElement()
 
-    def currentTime(s: String) = cachedInUserData("testWithParameters.currentTime", element, PsiModificationTracker.MODIFICATION_COUNT, Tuple1(s)) {
+    def currentTime(s: String) = cachedInUserData(cacheId[this.type, "testWithParameters.currentTime"], element, PsiModificationTracker.MODIFICATION_COUNT, Tuple1(s)) {
       System.currentTimeMillis()
     }
 
@@ -66,7 +66,7 @@ class CachedInUserDataTest extends CachedWithRecursionGuardTestBase {
     }
 
     class Foo {
-      def currentTime(): Long = cachedInUserData("testNotPsiElementHolder.currentTime", this, PsiModificationTracker.MODIFICATION_COUNT) {
+      def currentTime(): Long = cachedInUserData(cacheId[this.type, "testNotPsiElementHolder.currentTime"], this, PsiModificationTracker.MODIFICATION_COUNT) {
         System.currentTimeMillis()
       }
     }
@@ -85,11 +85,11 @@ class CachedInUserDataTest extends CachedWithRecursionGuardTestBase {
   def testTracer(): Unit = {
     val element = new CachedMockPsiElement()
 
-    def currentTime(): Long = cachedInUserData("testTracer.currentTime", element, PsiModificationTracker.MODIFICATION_COUNT) {
+    def currentTime(): Long = cachedInUserData(cacheId[this.type, "testTracer.currentTime"], element, PsiModificationTracker.MODIFICATION_COUNT) {
       System.currentTimeMillis()
     }
 
-    checkTracer(lambdaRegex("CachedInUserDataTest", "testTracer.currentTime"), totalCount = 3, actualCount = 2) {
+    checkTracer("org$jetbrains$plugins$scala$macroAnnotations$CachedInUserDataTest$testTracer$currentTime$cacheKey", "CachedInUserDataTest.testTracer.currentTime", totalCount = 3, actualCount = 2) {
       currentTime()
       currentTime()
 

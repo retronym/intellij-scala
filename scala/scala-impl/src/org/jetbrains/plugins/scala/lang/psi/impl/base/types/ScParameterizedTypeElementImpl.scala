@@ -4,7 +4,7 @@ package types
 import com.intellij.lang.ASTNode
 import com.intellij.psi._
 import com.intellij.psi.scope.PsiScopeProcessor
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.externalLibraries.kindProjector.KindProjectorUtil
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaElementVisitor
 import org.jetbrains.plugins.scala.lang.psi.api.base.types._
@@ -147,7 +147,7 @@ class ScParameterizedTypeElementImpl(node: ASTNode) extends ScalaPsiElementImpl(
   //computes desugarized type either for existential type or one of kind projector types
   override def computeDesugarizedType: Option[ScTypeElement] = _computeDesugarizedType()
 
-  private val _computeDesugarizedType = cached("computeDesugarizedType", BlockModificationTracker(this), () => {
+  private val _computeDesugarizedType = cached(cacheId[this.type, "computeDesugarizedType"], BlockModificationTracker(this), () => {
     Option(desugarizedText) match {
       case Some(text) => Option(createTypeElementFromText(text, getContext, this))
       case _ => None

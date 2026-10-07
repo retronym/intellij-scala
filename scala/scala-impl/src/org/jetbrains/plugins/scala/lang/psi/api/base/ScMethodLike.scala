@@ -1,7 +1,7 @@
 package org.jetbrains.plugins.scala.lang.psi.api.base
 
 import com.intellij.psi.PsiMethod
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.lang.psi.adapters.PsiTypeParametersOwnerAdapter
 import org.jetbrains.plugins.scala.lang.psi.api.statements.ScParameterOwner
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params.{ScParameter, ScParameters, ScTypeParam, ScTypeParamClause}
@@ -21,7 +21,7 @@ trait ScMethodLike
    * See https://youtrack.jetbrains.com/issue/SCL-3095 as for why this is needed.
    */
   private def getConstructorTypeParameterClause: Option[ScTypeParamClause] =
-    cachedInUserData("getConstructorTypeParameterClause", this, BlockModificationTracker(this)) {
+    cachedInUserData(cacheId[this.type, "getConstructorTypeParameterClause"], this, BlockModificationTracker(this)) {
       ScMethodLike.this match {
         case constructor @ ScalaConstructor.in(c: ScTypeDefinition) =>
           c.typeParametersClause.map { clause =>

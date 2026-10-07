@@ -6,7 +6,7 @@ import com.intellij.psi._
 import com.intellij.psi.scope.PsiScopeProcessor
 import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.plugins.scala.JavaArrayFactoryUtil
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions.PsiElementExt
 import org.jetbrains.plugins.scala.lang.parser.ScalaElementType
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaElementVisitor
@@ -27,7 +27,7 @@ class ScParametersImpl private (stub: ScParamClausesStub, node: ASTNode)
 
   override def clauses: Seq[ScParameterClause] = _clauses()
 
-  private val _clauses = cached("clauses", ModTracker.anyScalaPsiChange, () => {
+  private val _clauses = cached(cacheId[this.type, "clauses"], ModTracker.anyScalaPsiChange, () => {
     getStubOrPsiChildren(ScalaElementType.PARAM_CLAUSE, JavaArrayFactoryUtil.ScParameterClauseFactory).toSeq
   })
 

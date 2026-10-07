@@ -11,7 +11,7 @@ import com.intellij.platform.workspace.storage.WorkspaceEntityWithSymbolicId
 import com.intellij.psi.search.{FilenameIndex, GlobalSearchScope}
 import com.intellij.psi.{PsiClassOwner, PsiElement, PsiFile, PsiManager, SingleRootFileViewProvider}
 import com.intellij.util.CommonProcessors.FindProcessor
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.{ClassQualifiedName, ObjectExt, PsiClassExt}
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiImplementationHelper.findAssociatedEntities
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaFile
@@ -74,7 +74,7 @@ object ScClsFileViewProvider {
     override def getVirtualFile: VirtualFile = getViewProvider.getVirtualFile
 
     override def getNavigationElement: PsiElement = {
-      val sourceForCompiledFile: Option[VirtualFile] = cachedInUserData("getNavigationElement.sourceForCompiledFile", this, ProjectRootManager.getInstance(getProject)) {
+      val sourceForCompiledFile: Option[VirtualFile] = cachedInUserData(cacheId[this.type, "getNavigationElement.sourceForCompiledFile"], this, ProjectRootManager.getInstance(getProject)) {
         findSourceByRelativePath.orElse(findSourceByQualifiedName)
       }
 
@@ -83,7 +83,7 @@ object ScClsFileViewProvider {
         .getOrElse(super.getNavigationElement)
     }
 
-    override protected def defaultFileResolveScope(file: VirtualFile): GlobalSearchScope = cachedInUserData("defaultFileResolveScope",  this, ProjectRootManager.getInstance(getProject), Tuple1(file)) {
+    override protected def defaultFileResolveScope(file: VirtualFile): GlobalSearchScope = cachedInUserData(cacheId[this.type, "defaultFileResolveScope"],  this, ProjectRootManager.getInstance(getProject), Tuple1(file)) {
       // this cache is very inefficient when orderEntries.size is large
       LibraryScopeCache.getInstance(manager.getProject)
         .getLibraryScope(file)

@@ -7,7 +7,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.util.CompositeModificationTracker
-import org.jetbrains.plugins.scala.caches.cached
+import org.jetbrains.plugins.scala.caches.{cacheId, cached}
 import org.jetbrains.plugins.scala.extensions.executeOnPooledThread
 import org.jetbrains.plugins.scala.project.ProjectExt
 import org.jetbrains.plugins.scala.settings.ScalaCompileServerSettings
@@ -28,7 +28,7 @@ final class CompileServerNotificationsService(project: Project) {
    */
   def warnIfCompileServerJdkMayLeadToCompilationProblems(): Unit = _warnIfCompileServerJdkMayLeadToCompilationProblems()
 
-  private val _warnIfCompileServerJdkMayLeadToCompilationProblems = cached("warnIfCompileServerJdkMayLeadToCompilationProblems", modificationTracker, () => {
+  private val _warnIfCompileServerJdkMayLeadToCompilationProblems = cached(cacheId[this.type, "warnIfCompileServerJdkMayLeadToCompilationProblems"], modificationTracker, () => {
     if (project.hasScala) {
       for {
         (serverSdk, serverJdkVersion) <- CompileServerJdkManager.compileServerJdk(project)

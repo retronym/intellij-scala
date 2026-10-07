@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala.lang.psi.api.base
 package patterns
 
 import com.intellij.psi._
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.api.base.types.ScTypeVariableTypeElement
 import org.jetbrains.plugins.scala.lang.psi.api.expr._
@@ -54,7 +54,7 @@ object ScPattern {
       // the expected type of a pattern may be unknown just because it is requested while the type it
       // depends on is still being inferred, and caching that would make it unknown forever, see SCL-20702.
       Option(
-        cachedInUserData("expectedType", pattern, BlockModificationTracker(pattern)) {
+        cachedInUserData(cacheId[this.type, "expectedType"], pattern, BlockModificationTracker(pattern)) {
           _expectedType.orNull
         }
       )

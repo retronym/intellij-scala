@@ -6,7 +6,6 @@ import org.jetbrains.plugins.scala.caches.stats.Tracer
 import org.junit.Assert._
 
 import scala.jdk.CollectionConverters._
-import scala.util.matching.Regex
 
 package object macroAnnotations {
   def incModCount(project: Project): Unit = {
@@ -15,33 +14,24 @@ package object macroAnnotations {
     manager.dropPsiCaches()
   }
 
-  def checkTracer(nameRegex: Regex, totalCount: Int, actualCount: Int)(body: => Unit): Unit = {
+  def checkTracer(id: String, name: String, totalCount: Int, actualCount: Int)(body: => Unit): Unit = {
     Tracer.clearAll()
     Tracer.setEnabled(true)
     try {
       body
-      checkTracerHas(nameRegex, totalCount, actualCount)
+      checkTracerHas(id, name, totalCount, actualCount)
     } finally {
       Tracer.setEnabled(false)
     }
   }
 
-  private def checkTracerHas(nameRegex: Regex, totalCount: Int, actualCount: Int): Unit = {
-    val dataWithName = Tracer.getCurrentData.asScala.filter(data => nameRegex.matches(data.name))
-    assertTrue(s"No tracer data with name matching ${nameRegex.regex} (${Tracer.getCurrentData.asScala.map(_.name).mkString(", ")})", dataWithName.nonEmpty)
-    for {
-      data <- dataWithName
-    } {
-      assertEquals("Wrong total count:", totalCount, data.totalCount)
-      assertEquals("Wrong number of actual computations:", actualCount, data.actualCount)
+  private def checkTracerHas(id: String, name: String, totalCount: Int, actualCount: Int): Unit = {
+    val allData = Tracer.getCurrentData.asScala
+    val data = allData.find(_.id == id).getOrElse {
+      throw new AssertionError(s"No tracer data with id $id (${allData.map(_.id).mkString(", ")})")
     }
-  }
-
-  // Since JDK 21, inner lambdas have more elaborate binary names.
-  def lambdaRegex(className: String, description: String): Regex = {
-    def regexify(str: String): String = str.replace("$", "\\$").replace(".", "\\.")
-    val r1 = regexify(className)
-    val r2 = regexify(description)
-    (r1 ++ "\\$\\$Lambda/0x([0-9a-f])+\\." ++ r2).r
+    assertEquals("Wrong name:", name, data.name)
+    assertEquals("Wrong total count:", totalCount, data.totalCount)
+    assertEquals("Wrong number of actual computations:", actualCount, data.actualCount)
   }
 }

@@ -1,6 +1,6 @@
 package org.jetbrains.plugins.scala.lang.psi.implicits
 
-import org.jetbrains.plugins.scala.caches.measure
+import org.jetbrains.plugins.scala.caches.{cacheId, measure}
 import org.jetbrains.plugins.scala.extensions.ObjectExt
 import org.jetbrains.plugins.scala.lang.psi.{ElementScope, ScalaPsiUtil}
 import org.jetbrains.plugins.scala.lang.psi.api.InferUtil.functionTypeNoImplicits
@@ -66,7 +66,7 @@ private object NonValueFunctionTypes {
     fun:                 ScFunction,
     substitutor:         ScSubstitutor,
     exportedInExtension: Option[ScExtension]
-  ): Option[MethodTypeData] = measure("NonValueFunctionTypes.computeMethodType") {
+  ): Option[MethodTypeData] = measure(cacheId[this.type, "NonValueFunctionTypes.computeMethodType"]) {
     def hasImplicitClause(
       tpe:       ScType,
       isLeading: Boolean
@@ -124,7 +124,7 @@ private object NonValueFunctionTypes {
     substitutor:         ScSubstitutor,
     exportedInExtension: Option[ScExtension],
     typeFromMacro:       Option[ScType]
-  ): Option[UndefinedReturnTypeData] = measure("NonValueFunctionTypes.computeUndefinedType") {
+  ): Option[UndefinedReturnTypeData] = measure(cacheId[this.type, "NonValueFunctionTypes.computeUndefinedType"]) {
     val ft = functionTypeNoImplicits(fun, exportedInExtension)
 
     ft match {

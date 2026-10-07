@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala.lang.psi.impl.toplevel
 package templates
 
 import com.intellij.lang.ASTNode
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.lang.parser.ScalaElementType
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaElementVisitor
 import org.jetbrains.plugins.scala.lang.psi.api.base.types.ScTypeElement
@@ -53,7 +53,7 @@ final class ScTemplateParentsImpl private(stub: ScTemplateParentsStub, node: AST
     builder.result()
   }
 
-  private val syntheticTypeElements = cached("synteticTypeElements", BlockModificationTracker(this), () => {
+  private val syntheticTypeElements = cached(cacheId[this.type, "synteticTypeElements"], BlockModificationTracker(this), () => {
     getContext.getContext match {
       case td: ScTypeDefinition => SyntheticMembersInjector.injectSupers(td)
       case _ => Seq.empty

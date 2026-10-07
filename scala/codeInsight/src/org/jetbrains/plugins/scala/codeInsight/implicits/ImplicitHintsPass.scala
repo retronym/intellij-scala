@@ -15,7 +15,7 @@ import org.jetbrains.plugins.scala.annotator.HighlightingAdvisor
 import org.jetbrains.plugins.scala.annotator.hints.Hint.HintPosition
 import org.jetbrains.plugins.scala.annotator.hints._
 import org.jetbrains.plugins.scala.autoImport.quickFix.{ImportImplicitInstanceFix, PopupPosition}
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.codeInsight.ScalaCodeInsightBundle
 import org.jetbrains.plugins.scala.codeInsight.hints.methodChains.ScalaMethodChainInlayHintsPass
 import org.jetbrains.plugins.scala.codeInsight.hints.rangeHints.RangeInlayHintsPass
@@ -161,7 +161,7 @@ class ImplicitHintsPass(
         if (injectedConstructors.isEmpty) Seq.empty
         else
           cachedInUserData(
-            "injectedConstructorHintsFor",
+            cacheId[this.type, "injectedConstructorHintsFor"],
             tdef,
             ModTracker.physicalPsiChange(tdef.getProject)
           ) {

@@ -4,7 +4,7 @@ package params
 import com.intellij.lang.ASTNode
 import com.intellij.psi._
 import com.intellij.psi.search.{LocalSearchScope, SearchScope}
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.icons.Icons
 import org.jetbrains.plugins.scala.lang.TokenSets
@@ -75,7 +75,7 @@ class ScTypeParamImpl private (stub: ScTypeParamStub, node: ASTNode)
 
   override def isCovariant: Boolean = _isCovariant()
 
-  private val _isCovariant = cached("isCovariant", ModTracker.anyScalaPsiChange, () => {
+  private val _isCovariant = cached(cacheId[this.type, "isCovariant"], ModTracker.anyScalaPsiChange, () => {
     byStubOrPsi(_.isCovariant) {
       Option(findChildByType[PsiElement](tIDENTIFIER))
         .exists(_.textMatches("+"))
@@ -84,7 +84,7 @@ class ScTypeParamImpl private (stub: ScTypeParamStub, node: ASTNode)
 
   override def isContravariant: Boolean = _isContravariant()
 
-  private val _isContravariant = cached("isContravariant", ModTracker.anyScalaPsiChange, () => {
+  private val _isContravariant = cached(cacheId[this.type, "isContravariant"], ModTracker.anyScalaPsiChange, () => {
     byStubOrPsi(_.isContravariant) {
       Option(findChildByType[PsiElement](tIDENTIFIER))
         .exists(_.textMatches("-"))

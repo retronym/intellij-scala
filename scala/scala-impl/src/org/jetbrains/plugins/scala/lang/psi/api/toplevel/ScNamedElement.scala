@@ -8,7 +8,7 @@ import com.intellij.psi._
 import com.intellij.psi.stubs.{NamedStub, StubElement}
 import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.annotations.Nullable
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions.ObjectExt
 import org.jetbrains.plugins.scala.icons.Icons
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiPresentationUtils.{
@@ -42,7 +42,7 @@ trait ScNamedElement extends ScalaPsiElement
   @NlsSafe
   def name: String = _name()
 
-  private val _name = cached("name", ModTracker.anyScalaPsiChange, () => {
+  private val _name = cached(cacheId[this.type, "name"], ModTracker.anyScalaPsiChange, () => {
     this match {
       case st: StubBasedPsiElementBase[_] => st.getGreenStub match {
         case namedStub: NamedStub[_] => namedStub.getName
@@ -65,7 +65,7 @@ trait ScNamedElement extends ScalaPsiElement
 
   def nameContext: PsiElement = _nameContext()
 
-  private val _nameContext = cached("nameContext", ModTracker.anyScalaPsiChange, () => {
+  private val _nameContext = cached(cacheId[this.type, "nameContext"], ModTracker.anyScalaPsiChange, () => {
     @tailrec
     def byStub(stub: StubElement[?]): PsiElement = {
       if (stub == null) null

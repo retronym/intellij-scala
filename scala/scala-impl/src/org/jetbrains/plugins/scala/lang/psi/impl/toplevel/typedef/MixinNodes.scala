@@ -11,7 +11,7 @@ import com.intellij.util.{AstLoadingFilter, SmartList}
 import it.unimi.dsi.fastutil.Hash
 import it.unimi.dsi.fastutil.objects.{Object2ObjectMap, Object2ObjectMaps, Object2ObjectOpenCustomHashMap}
 import org.jetbrains.annotations.Nullable
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.api.base.ScFieldId
 import org.jetbrains.plugins.scala.lang.psi.api.base.patterns.ScBindingPattern
@@ -214,7 +214,7 @@ object MixinNodes {
   private object SuperTypesData {
 
     def apply(thisClass: PsiClass): SuperTypesData =
-      cachedInUserData("SuperTypesData.apply", thisClass, ModTracker.libraryAware(thisClass), Tuple1(thisClass)) {
+      cachedInUserData(cacheId[this.type, "SuperTypesData.apply"], thisClass, ModTracker.libraryAware(thisClass), Tuple1(thisClass)) {
         val superTypes = thisClass match {
           case syn: ScSyntheticClass          => syn.getSuperTypes.map(_.toScType()(using syn)).toSeq
           case newTd: ScNewTemplateDefinition => MixinNodes.linearization(newTd)
@@ -752,7 +752,7 @@ object MixinNodes {
   }
 
   def linearization(clazz: PsiClass): Seq[ScType] =
-    cachedWithRecursionGuard("linearization", clazz, Seq.empty[ScType], ModTracker.libraryAware(clazz)) {
+    cachedWithRecursionGuard(cacheId[this.type, "linearization"], clazz, Seq.empty[ScType], ModTracker.libraryAware(clazz)) {
       implicit val context: Context = Context(clazz)
 
       clazz match {

@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala.codeInspection.declarationRedundancy
 
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi.PsiFile
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.{ObjectExt, OptionExt}
 import org.jetbrains.plugins.scala.lang.psi.api.base.ScPrimaryConstructor
 import org.jetbrains.plugins.scala.lang.psi.api.base.patterns.ScReferencePattern
@@ -149,7 +149,7 @@ private[declarationRedundancy] object SymbolEscaping {
    *
    * For a typical usage example, see [[elementIsSymbolWhichEscapesItsDefiningScopeWhenItIsPrivate]].
    */
-  private def getEscapeInfos(typeDef: ScTypeDefinition): Seq[EscapeInfo] = cachedInUserData("getEscapeInfosOfTypeDefMembers", typeDef, ModTracker.anyScalaPsiChange, Tuple1(typeDef)) {
+  private def getEscapeInfos(typeDef: ScTypeDefinition): Seq[EscapeInfo] = cachedInUserData(cacheId[this.type, "getEscapeInfosOfTypeDefMembers"], typeDef, ModTracker.anyScalaPsiChange, Tuple1(typeDef)) {
 
     val typeDefFile = typeDef.getContainingFile
 

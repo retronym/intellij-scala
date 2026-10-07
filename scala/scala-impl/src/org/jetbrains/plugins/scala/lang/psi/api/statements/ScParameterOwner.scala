@@ -5,7 +5,7 @@ import com.intellij.openapi.util.Key
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.{PsiElement, ResolveState}
 import com.intellij.psi.scope.PsiScopeProcessor
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cached, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cacheId, cached, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
 import org.jetbrains.plugins.scala.lang.psi.api.base.ScReference
@@ -31,7 +31,7 @@ trait ScInterleavedClausesOwner extends ScParameterOwner with ScTypeParametersOw
 
   def effectiveSignatureClauses: Seq[ScSignatureClause] = signatureClauses
 
-  private val _signatureClauses = cached("signatureClauses", ModTracker.anyScalaPsiChange, () => {
+  private val _signatureClauses = cached(cacheId[this.type, "signatureClauses"], ModTracker.anyScalaPsiChange, () => {
     val clausesFromParameters = clauses.toSeq.flatMap { parameters =>
       val clausesInLexicalOrder = parameters.stubOrPsiChildren.collect {
         case clause: ScTypeParamClause => TypeClause(clause)
@@ -79,7 +79,7 @@ object ScParameterOwner {
 
     override def effectiveSignatureClauses: Seq[ScSignatureClause] =
       cachedInUserData(
-        "effectiveSignatureClauses",
+        cacheId[this.type, "effectiveSignatureClauses"],
         this,
         BlockModificationTracker(this)
       ) {

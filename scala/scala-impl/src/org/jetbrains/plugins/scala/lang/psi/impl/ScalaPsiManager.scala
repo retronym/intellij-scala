@@ -16,7 +16,7 @@ import com.intellij.util.containers.ContainerUtil
 import org.jetbrains.annotations.{Nullable, TestOnly}
 import org.jetbrains.plugins.scala.ScalaLowerCase
 import org.jetbrains.plugins.scala.caches.stats.{CacheCapabilities, CacheTracker}
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, CleanupScheduler, ModTracker, ScalaModificationTracker, ScalaShortNamesCacheManager, ValueWrapper, cachedInUserData, cachedWithoutModificationCount}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, CleanupScheduler, ModTracker, ScalaModificationTracker, ScalaShortNamesCacheManager, ValueWrapper, cacheId, cachedInUserData, cachedWithoutModificationCount}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.ElementScope
 import org.jetbrains.plugins.scala.lang.psi.api.PropertyMethods
@@ -78,7 +78,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getStableSignaturesCached =
     cachedWithoutModificationCount(
-      "getStableSignaturesCached",
+      cacheId[this.type, "getStableSignaturesCached"],
       ValueWrapper.SofterReference,
       clearCacheOnChange,
       (tp: ScCompoundType, compoundTypeThisType: Option[ScType]) => StableNodes.build(tp, compoundTypeThisType)
@@ -90,7 +90,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getTypesCached =
     cachedWithoutModificationCount(
-      "getTypesCached",
+      cacheId[this.type, "getTypesCached"],
       ValueWrapper.SofterReference,
       clearCacheOnChange,
       (tp: ScCompoundType, compoundTypeThisType: Option[ScType]) => TypeNodes.build(tp, compoundTypeThisType)
@@ -103,7 +103,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getSignaturesCached =
     cachedWithoutModificationCount(
-      "getSignaturesCached",
+      cacheId[this.type, "getSignaturesCached"],
       ValueWrapper.SofterReference,
       clearCacheOnChange,
       (tp: ScCompoundType, compoundTypeThisType: Option[ScType]) => TermNodes.build(tp, compoundTypeThisType)
@@ -115,7 +115,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getIntersectionStableSignaturesCached =
     cachedWithoutModificationCount(
-      "getIntersectionStableSignaturesCached",
+      cacheId[this.type, "getIntersectionStableSignaturesCached"],
       ValueWrapper.SofterReference,
       clearCacheOnChange,
       (tp: ScAndType) => StableNodes.build(tp)
@@ -127,7 +127,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getIntersectionTypesCached =
     cachedWithoutModificationCount(
-      "getIntersectionTypesCached",
+      cacheId[this.type, "getIntersectionTypesCached"],
       ValueWrapper.SofterReference,
       clearCacheOnChange,
       (tp: ScAndType) => TypeNodes.build(tp)
@@ -140,7 +140,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getIntersectionSignaturesCached =
     cachedWithoutModificationCount(
-      "getIntersectionSignaturesCached",
+      cacheId[this.type, "getIntersectionSignaturesCached"],
       ValueWrapper.SofterReference,
       clearCacheOnChange,
       (tp: ScAndType) => TermNodes.build(tp)
@@ -150,7 +150,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val _simpleAliasProjectionCached =
     cachedWithoutModificationCount(
-      "simpleAliasProjectionCached",
+      cacheId[this.type, "simpleAliasProjectionCached"],
       ValueWrapper.SofterReference,
       clearCacheOnChange,
       (projection: ScProjectionType) => ScProjectionType.simpleAliasProjection(projection)
@@ -176,7 +176,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getPackageImplicitObjectsCached =
     cachedWithoutModificationCount(
-      "getPackageImplicitObjectsCached",
+      cacheId[this.type, "getPackageImplicitObjectsCached"],
       ValueWrapper.SofterReference,
       clearCacheOnTopLevelChange,
       (fqn: String, scope: GlobalSearchScope) => IMPLICIT_OBJECT_KEY.elements(cleanFqn(fqn), scope)
@@ -184,7 +184,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getTopLevelImplicitClassesByPackageCached =
     cachedWithoutModificationCount(
-      "getTopLevelImplicitClassesByPackageCached",
+      cacheId[this.type, "getTopLevelImplicitClassesByPackageCached"],
       ValueWrapper.SofterReference,
       clearCacheOnTopLevelChange,
       (fqn: String, scope: GlobalSearchScope) => TOP_LEVEL_IMPLICIT_CLASS_BY_PKG_KEY.elements(cleanFqn(fqn), scope)
@@ -192,7 +192,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getTopLevelGivenDefinitionsByPackageCached =
     cachedWithoutModificationCount(
-      "getTopLevelGivenDefinitionsByPackageCached",
+      cacheId[this.type, "getTopLevelGivenDefinitionsByPackageCached"],
       ValueWrapper.SofterReference,
       clearCacheOnTopLevelChange,
       (fqn: String, scope: GlobalSearchScope) => TOP_LEVEL_GIVEN_DEFINITIONS_BY_PKG_KEY.elements(cleanFqn(fqn), scope)
@@ -200,7 +200,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getTopLevelExtensionsByPackageCached =
     cachedWithoutModificationCount(
-      "getTopLevelExtensionsByPackageCached",
+      cacheId[this.type, "getTopLevelExtensionsByPackageCached"],
       ValueWrapper.SofterReference,
       clearCacheOnTopLevelChange,
       (fqn: String, scope: GlobalSearchScope) => TOP_LEVEL_EXTENSION_BY_PKG_KEY.elements(cleanFqn(fqn), scope)
@@ -210,7 +210,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val _getCachedPackage =
     cachedWithoutModificationCount(
-      "getCachedPackage",
+      cacheId[this.type, "getCachedPackage"],
       ValueWrapper.SofterReference,
       clearCacheOnTopLevelChange,
       (inFqn: String) => {
@@ -225,7 +225,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val _noNamePackage: () => Option[ScPackageImpl] =
     cachedWithoutModificationCount(
-      "noNamePackage",
+      cacheId[this.type, "noNamePackage"],
       ValueWrapper.SofterReference[Option[ScPackageImpl]],
       clearCacheOnTopLevelChange,
       () => getCachedPackage("").map(ScPackageImpl(_))
@@ -259,7 +259,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val computeCachedPackageInScope =
     cachedWithoutModificationCount(
-      "computeCachedPackageInScope",
+      cacheId[this.type, "computeCachedPackageInScope"],
       ValueWrapper.SofterReference,
       clearCacheOnTopLevelChange,
       (fqn: String, scope: GlobalSearchScope) =>
@@ -274,7 +274,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val _getCachedClass =
     cachedWithoutModificationCount(
-      "getCachedClass",
+      cacheId[this.type, "getCachedClass"],
       ValueWrapper.SofterReference,
       clearCacheOnTopLevelChange,
       (scope: GlobalSearchScope, fqn: String) => {
@@ -298,7 +298,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val _getTopLevelExportsByPackage =
     cachedWithoutModificationCount(
-      "getTopLevelDefinitionsByPackage",
+      cacheId[this.type, "getTopLevelExportsByPackage"],
       ValueWrapper.SofterReference,
       clearCacheOnTopLevelChange,
       (pkgFqn: String, scope: GlobalSearchScope) => {
@@ -314,7 +314,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val _getTopLevelDefinitionsByPackage =
     cachedWithoutModificationCount(
-      "getTopLevelDefinitionsByPackage",
+      cacheId[this.type, "getTopLevelDefinitionsByPackage"],
       ValueWrapper.SofterReference,
       clearCacheOnTopLevelChange,
       (pkgFqn: String, scope: GlobalSearchScope) => {
@@ -371,7 +371,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getScalaPackageClassesCached =
     cachedWithoutModificationCount(
-      "getScalaPackageClassesCached",
+      cacheId[this.type, "getScalaPackageClassesCached"],
       ValueWrapper.None,
       clearCacheOnTopLevelChange,
       (scope: GlobalSearchScope) =>
@@ -421,7 +421,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
   def getCachedClasses(scope: GlobalSearchScope, fqn: String): Array[PsiClass] = _getCachedClasses(scope, fqn)
 
   private val _getCachedClasses = cachedWithoutModificationCount(
-    "getCachedClasses",
+    cacheId[this.type, "getCachedClasses"],
     ValueWrapper.SofterReference,
     clearCacheOnTopLevelChange,
     (scope: GlobalSearchScope, fqn: String) => {
@@ -465,7 +465,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
   def cachedFunction1Type(elementScope: ElementScope): Option[ScParameterizedType] = _cachedFunction1Type(elementScope)
 
   private val _cachedFunction1Type = cachedWithoutModificationCount(
-    "cachedFunction1Type",
+    cacheId[this.type, "cachedFunction1Type"],
     ValueWrapper.SofterReference,
     clearCacheOnTopLevelChange,
     (elementScope: ElementScope) => elementScope.function1Type()
@@ -474,7 +474,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
   def scalaSeqAlias(scope: GlobalSearchScope): Option[ScTypeAlias] = _scalaSeqAlias(scope)
 
   private val _scalaSeqAlias = cachedWithoutModificationCount(
-    "scalaSeqAlias",
+    cacheId[this.type, "scalaSeqAlias"],
     ValueWrapper.SofterReference,
     clearCacheOnTopLevelChange,
     (scope: GlobalSearchScope) => getStableAliasesByFqn("scala.Seq", scope).headOption
@@ -483,7 +483,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
   def scalaNamedTupleAlias(scope: GlobalSearchScope): Option[ScTypeAlias] = _scalaNamedTupleAlias(scope)
 
   private val _scalaNamedTupleAlias = cachedWithoutModificationCount(
-    "scalaNamedTupleAlias",
+    cacheId[this.type, "scalaNamedTupleAlias"],
     ValueWrapper.SofterReference,
     clearCacheOnTopLevelChange,
     (scope: GlobalSearchScope) => getStableAliasesByFqn("scala.NamedTuple.NamedTuple", scope).headOption
@@ -495,7 +495,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
   }
 
   private val getJavaPackageClassNamesCached = cachedWithoutModificationCount(
-    "getJavaPackageClassNamesCached",
+    cacheId[this.type, "getJavaPackageClassNamesCached"],
     ValueWrapper.None,
     clearCacheOnTopLevelChange,
     (psiPackage: PsiPackage, scope: GlobalSearchScope) => {
@@ -520,7 +520,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val getScalaClassNamesCached =
     cachedWithoutModificationCount(
-      "getScalaClassNamesCached",
+      cacheId[this.type, "getScalaClassNamesCached"],
       ValueWrapper.None,
       clearCacheOnTopLevelChange,
       (scalaQualifiedName: String, scope: GlobalSearchScope) =>
@@ -582,7 +582,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
 
   private val _javaPsiTypeParameterUpperType =
     cachedWithoutModificationCount(
-      "javaPsiTypeParameterUpperType",
+      cacheId[this.type, "javaPsiTypeParameterUpperType"],
       ValueWrapper.SofterReference,
       clearCacheOnChange,
       (typeParameter: PsiTypeParameter) => {
@@ -651,7 +651,7 @@ class ScalaPsiManager(implicit val project: Project) extends Disposable {
         case `rootManager`               => forLibraryClasses(clazz, withSupers)
         case TopLevelModificationTracker => forTopLevelClasses(clazz, withSupers)
         case tracker =>
-          cachedInUserData("cachedMap", clazz, tracker, (clazz, nodes, withSupers)) {
+          cachedInUserData(cacheId[this.type, "cachedMap"], clazz, tracker, (clazz, nodes, withSupers)) {
             nodes.build(clazz, withSupers)
           }
       }

@@ -3,7 +3,7 @@ package org.jetbrains.plugins.scala.externalLibraries.kindProjector
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import org.apache.maven.artifact.versioning.ComparableVersion
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.api.base.types._
 import org.jetbrains.plugins.scala.lang.psi.api.statements.ScFunction
@@ -167,7 +167,7 @@ object KindProjectorUtil {
     * }}}
     */
     private def syntheticPolyLambdaBuilder: Option[ScTypeDefinition] =
-      cachedInUserData("getSyntheticImplicitMethod", tdef, ModTracker.libraryAware(tdef)) {
+      cachedInUserData(cacheId[this.type, "getSyntheticImplicitMethod"], tdef, ModTracker.libraryAware(tdef)) {
         val tparams = tdef.typeParameters
         val methods = tdef.functions.filter(canBeRewritten(_, tparams))
 

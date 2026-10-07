@@ -3,7 +3,7 @@ package org.jetbrains.plugins.scala.lang.psi.impl.expr
 import com.intellij.lang.ASTNode
 import com.intellij.psi.PsiMethod
 import org.jetbrains.plugins.scala.ScalaBundle
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions.ObjectExt
 import org.jetbrains.plugins.scala.externalLibraries.kindProjector.KindProjectorUtil.kindProjectorPolymorphicLambdaType
 import org.jetbrains.plugins.scala.externalLibraries.kindProjector.PolymorphicLambda
@@ -89,7 +89,7 @@ class ScGenericCallImpl(node: ASTNode) extends ScExpressionImplBase(node) with S
       )
   }
 
-  private val polymorphicLambdaType = cached("polymorphicLambdaType", ModTracker.physicalPsiChange(getProject), () => {
+  private val polymorphicLambdaType = cached(cacheId[this.type, "polymorphicLambdaType"], ModTracker.physicalPsiChange(getProject), () => {
     this match {
       case PolymorphicLambda(des, lhs, rhs) => kindProjectorPolymorphicLambdaType(des, lhs, rhs).asTypeResult
       case _                                => Failure(ScalaBundle.message("not.a.polymorphic.lambda"))

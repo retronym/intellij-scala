@@ -6,7 +6,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.plugins.scala.autoImport.GlobalExtensionMethod
 import org.jetbrains.plugins.scala.autoImport.GlobalMember.findGlobalMembers
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.{NonNullObjectExt, ObjectExt, PsiClassExt, PsiElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.expr.ScExpression
 import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScFunction, ScFunctionExt, ScSignatureClause}
@@ -89,7 +89,7 @@ object ExtensionMethodData {
 
     val rawCheck: Option[ExtensionMethodData] =
       cachedInUserData(
-        "apply.rawExtensionMethodCheck",
+        cacheId[this.type, "apply.rawExtensionMethodCheck"],
         function,
         ModTracker.libraryAware(function),
         Tuple1(function)

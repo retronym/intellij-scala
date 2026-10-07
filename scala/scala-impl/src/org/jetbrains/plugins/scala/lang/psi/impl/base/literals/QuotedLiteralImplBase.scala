@@ -4,7 +4,7 @@ package literals
 import com.intellij.lang.ASTNode
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.util
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 
 abstract class QuotedLiteralImplBase(node: ASTNode,
                                      override val toString: String)
@@ -22,7 +22,7 @@ abstract class QuotedLiteralImplBase(node: ASTNode,
 
   protected def toValue(text: String): V
 
-  override final def getValue: V = cachedInUserData("getValue", this, util.PsiModificationTracker.MODIFICATION_COUNT) {
+  override final def getValue: V = cachedInUserData(cacheId[this.type, "getValue"], this, util.PsiModificationTracker.MODIFICATION_COUNT) {
     getText match {
       case text if text.startsWith(startQuote) =>
         val trimLeft = startQuote.length

@@ -1,6 +1,6 @@
 package org.jetbrains.plugins.scala.lang.psi.api.statements
 
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.lang.psi.api.expr._
 import org.jetbrains.plugins.scala.lang.psi.api.{ScControlFlowOwner, ScalaPsiElement}
 import org.jetbrains.plugins.scala.lang.psi.light.{PsiClassWrapper, StaticTraitScFunctionWrapper}
@@ -19,7 +19,7 @@ trait ScFunctionDefinition extends ScFunction with ScControlFlowOwner with ScDef
 
   def getStaticTraitFunctionWrapper(cClass: PsiClassWrapper): StaticTraitScFunctionWrapper = _getStaticTraitFunctionWrapper(cClass)
 
-  private val _getStaticTraitFunctionWrapper = cached("getStaticTraitFunctionWrapper", BlockModificationTracker(this), (cClass: PsiClassWrapper) => {
+  private val _getStaticTraitFunctionWrapper = cached(cacheId[this.type, "getStaticTraitFunctionWrapper"], BlockModificationTracker(this), (cClass: PsiClassWrapper) => {
     new StaticTraitScFunctionWrapper(this, cClass)
   })
 }

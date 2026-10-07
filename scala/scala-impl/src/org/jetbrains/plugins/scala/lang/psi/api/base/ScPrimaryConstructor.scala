@@ -1,6 +1,6 @@
 package org.jetbrains.plugins.scala.lang.psi.api.base
 
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached, cachedInUserData}
 import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScParameterOwner, ScSignatureClause}
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params._
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef._
@@ -41,7 +41,7 @@ trait ScPrimaryConstructor extends ScMember with ScMethodLike {
    * In addition, view and context bounds generate an additional implicit parameter section.
    */
   override def effectiveSignatureClauses: Seq[ScSignatureClause] =
-    cachedInUserData("effectiveSignatureClauses", this, BlockModificationTracker(this)) {
+    cachedInUserData(cacheId[this.type, "effectiveSignatureClauses"], this, BlockModificationTracker(this)) {
       def emptyParameterList: ScParameterClause =
         ScalaPsiElementFactory.createEmptyClassParamClauseWithContext(parameterList)
 
@@ -64,7 +64,7 @@ trait ScPrimaryConstructor extends ScMember with ScMethodLike {
 
   def getFunctionWrappers: Seq[ScPrimaryConstructorWrapper] = _getFunctionWrappers()
 
-  private val _getFunctionWrappers = cached("getFunctionWrappers", BlockModificationTracker(this), () => {
+  private val _getFunctionWrappers = cached(cacheId[this.type, "getFunctionWrappers"], BlockModificationTracker(this), () => {
     val builder = ArraySeq.newBuilder[ScPrimaryConstructorWrapper]
 
     for {

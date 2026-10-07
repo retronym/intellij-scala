@@ -7,7 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.psi._
 import org.jetbrains.plugins.scala.{Scala3Language, ScalaFileType, ScalaLanguage}
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.{ObjectExt, PsiElementExt}
 import org.jetbrains.plugins.scala.lang.lexer._
 import org.jetbrains.plugins.scala.lang.parser._
@@ -246,11 +246,11 @@ object ScalaCompletionUtil {
     member.containingClass match {
       case null => Set.empty
       case clazz =>
-        val inheritorObjectsInProject: Set[ScObject] = cachedInUserData("findAllInheritorObjectsForOwner.inheritorObjectsInProject", clazz, BlockModificationTracker(clazz), Tuple1(clazz)) {
+        val inheritorObjectsInProject: Set[ScObject] = cachedInUserData(cacheId[this.type, "findAllInheritorObjectsForOwner.inheritorObjectsInProject"], clazz, BlockModificationTracker(clazz), Tuple1(clazz)) {
           ScalaInheritors.allInheritorObjects(clazz)
         }
 
-        val inheritorObjectsInLibraries: Set[ScObject] = cachedInUserData("findAllInheritorObjectsForOwner.inheritorObjectsInLibraries", clazz, ModTracker.libraryAware(clazz), Tuple1(clazz)) {
+        val inheritorObjectsInLibraries: Set[ScObject] = cachedInUserData(cacheId[this.type, "findAllInheritorObjectsForOwner.inheritorObjectsInLibraries"], clazz, ModTracker.libraryAware(clazz), Tuple1(clazz)) {
           ScalaInheritors.allInheritorObjects(clazz)
         }
 

@@ -3,7 +3,7 @@ package org.jetbrains.plugins.scala.lang.psi.impl
 import com.intellij.psi.{PsiElement, PsiMethod, PsiTypeParameterList}
 import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.annotations.Nullable
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.api.base.{ConstructorInvocationLike, ScConstructorInvocation, ScMethodLike}
 import org.jetbrains.plugins.scala.lang.psi.api.base.types.ScTypeArgs
@@ -34,7 +34,7 @@ private[psi] object InvocationDetailsImpl {
   
   def of(invocation: ConstructorInvocationLike): InvocationDetails =
     cachedInUserData(
-      "InvocationDetailsImpl.constructorCall",
+      cacheId[this.type, "InvocationDetailsImpl.constructorCall"],
       invocation,
       BlockModificationTracker(invocation)
     ) {
@@ -51,7 +51,7 @@ private[psi] object InvocationDetailsImpl {
 
   private def invocationsInExpr(syntaxRoot: InvocationDetailsExpr): Map[ScExpression, InvocationDetails] =
     cachedInUserData(
-      "InvocationDetailsImpl.callSegments",
+      cacheId[this.type, "InvocationDetailsImpl.callSegments"],
       syntaxRoot,
       BlockModificationTracker(syntaxRoot)
     ) {

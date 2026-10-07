@@ -1,7 +1,7 @@
 package org.jetbrains.plugins.scala.lang.psi.implicits
 
 import com.intellij.psi._
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.lang.psi.ElementScope
 import org.jetbrains.plugins.scala.lang.psi.api.expr.ScExpression
 import org.jetbrains.plugins.scala.lang.psi.types._
@@ -18,7 +18,7 @@ object ScImplicitlyConvertible {
     findPlaceType(place, fromUnderscore).toSeq.flatMap { placeType =>
       val regulars =
         cachedWithRecursionGuard(
-          "collectRegulars",
+          cacheId[this.type, "collectRegulars"],
           place,
           Set.empty[ImplicitConversionResolveResult],
           BlockModificationTracker(place),
@@ -38,7 +38,7 @@ object ScImplicitlyConvertible {
 
       val companions =
         cachedWithRecursionGuard(
-          "collectCompanions",
+          cacheId[this.type, "collectCompanions"],
           place,
           Set.empty[ImplicitConversionResolveResult],
           BlockModificationTracker(place),

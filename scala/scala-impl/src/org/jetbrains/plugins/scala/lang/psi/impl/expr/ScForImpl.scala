@@ -6,7 +6,7 @@ import com.intellij.psi._
 import com.intellij.psi.scope._
 import com.intellij.psi.tree.IElementType
 import org.jetbrains.plugins.scala.ScalaBundle
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions.{BooleanExt, IterableOnceExt, Model, ObjectExt, PsiElementExt, StringsExt}
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenTypes
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
@@ -85,7 +85,7 @@ class ScForImpl(node: ASTNode) extends ScExpressionImplBase(node) with ScFor wit
   private def compilerRewritesWithFilterToFilter: Boolean = this.scalaLanguageLevel.exists(_ < ScalaLanguageLevel.Scala_2_12)
 
   // we only really need to cache the version that is used by type inference
-  private val getDesugaredExprWithMappings = cached("getDesugaredExprWithMappings", BlockModificationTracker(this), () => {
+  private val getDesugaredExprWithMappings = cached(cacheId[this.type, "getDesugaredExprWithMappings"], BlockModificationTracker(this), () => {
     visitWithFilterExprs(this)(e => e.putUserData(explicitWithFilterKey, ()))
 
     generateDesugaredExprWithMappings(forDisplay = false).map {

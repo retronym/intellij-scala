@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala.lang.psi.impl.expr
 
 import com.intellij.lang.ASTNode
 import com.intellij.psi.{PsiElement, PsiField}
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions.PsiNamedElementExt
 import org.jetbrains.plugins.scala.lang.psi.{ScDeclarationSequenceHolder, ScalaPsiUtil}
 import org.jetbrains.plugins.scala.lang.psi.api.expr._
@@ -35,19 +35,19 @@ class ScAssignmentImpl(node: ASTNode) extends ScExpressionImplBase(node) with Sc
 
   override def resolveAssignment: Option[ScalaResolveResult] = _resolveAssignment()
 
-  private val _resolveAssignment = cached("resolveAssignment", BlockModificationTracker(this), () => {
+  private val _resolveAssignment = cached(cacheId[this.type, "resolveAssignment"], BlockModificationTracker(this), () => {
     resolveAssignmentInner(shapeResolve = false)
   })
 
   override def shapeResolveAssignment: Option[ScalaResolveResult] = _shapeResolveAssignment()
 
-  private val _shapeResolveAssignment = cached("shareResolveAssignment", BlockModificationTracker(this), () => {
+  private val _shapeResolveAssignment = cached(cacheId[this.type, "shareResolveAssignment"], BlockModificationTracker(this), () => {
     resolveAssignmentInner(shapeResolve = true)
   })
 
   override def mirrorMethodCall: Option[ScMethodCall] = _mirrorMethodCall()
 
-  private val _mirrorMethodCall = cached("mirrorMethodCall", BlockModificationTracker(this), () => {
+  private val _mirrorMethodCall = cached(cacheId[this.type, "mirrorMethodCall"], BlockModificationTracker(this), () => {
     def setterCall(text: String): Option[ScMethodCall] = {
       val mirrorExpr = ScalaPsiElementFactory.createExpressionWithContextFromText(text, getContext, this)
       mirrorExpr match {

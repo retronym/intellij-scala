@@ -3,7 +3,7 @@ package org.jetbrains.plugins.scala.lang.psi.impl.expr
 import com.intellij.lang.ASTNode
 import com.intellij.psi.scope.PsiScopeProcessor
 import com.intellij.psi.{PsiElement, ResolveState}
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaPsiElement
 import org.jetbrains.plugins.scala.lang.psi.api.base.ScParenthesizedElement.InnermostElement
@@ -44,7 +44,7 @@ class ScPolyFunctionExprImpl(node: ASTNode)
 
   private val syntheticContextBoundParameters: () => Option[ScParameterClause] =
     cached(
-      "ScPolyFunctionExpr#syntheticContextBoundParameters",
+      cacheId[this.type, "ScPolyFunctionExpr#syntheticContextBoundParameters"],
       ModTracker.anyScalaPsiChange,
       () => {
         ScalaPsiUtil
@@ -59,7 +59,7 @@ class ScPolyFunctionExprImpl(node: ASTNode)
 
   private val cachedDesugaredType: () => Option[ScType] =
     cached(
-      "ScPolyFunctionExpr#cachedDesugaredType",
+      cacheId[this.type, "ScPolyFunctionExpr#cachedDesugaredType"],
       ModTracker.anyScalaPsiChange,
       () => {
         implicit val tpc: TypePresentationContext = this

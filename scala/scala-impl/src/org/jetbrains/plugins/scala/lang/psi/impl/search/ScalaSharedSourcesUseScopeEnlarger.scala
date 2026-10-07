@@ -5,7 +5,7 @@ import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.psi.search.{GlobalSearchScope, LocalSearchScope, SearchScope, UseScopeEnlarger}
 import com.intellij.psi.{PsiElement, PsiMember}
 import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiManager
 import org.jetbrains.plugins.scala.project.ModuleExt
 
@@ -22,7 +22,7 @@ class ScalaSharedSourcesUseScopeEnlarger extends UseScopeEnlarger {
     if (psiFile == null)
       return null
 
-    val sharedModules: Array[module.Module] = cachedInUserData("getAdditionalUseScope.sharedModules", psiFile, ScalaPsiManager.instance(psiFile.getProject).TopLevelModificationTracker, Tuple1(psiFile)) {
+    val sharedModules: Array[module.Module] = cachedInUserData(cacheId[this.type, "getAdditionalUseScope.sharedModules"], psiFile, ScalaPsiManager.instance(psiFile.getProject).TopLevelModificationTracker, Tuple1(psiFile)) {
       val module = ModuleUtilCore.findModuleForPsiElement(psiFile)
       if (module == null) Array.empty else module.sharedSourceDependencies.toArray
     }

@@ -6,7 +6,7 @@ import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.psi.scope.PsiScopeProcessor
 import com.intellij.psi.tree.IElementType
 import com.intellij.psi.{PsiElement, PsiNamedElement, ResolveState}
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.{Model, ObjectExt, StringsExt}
 import org.jetbrains.plugins.scala.icons.Icons
 import org.jetbrains.plugins.scala.lang.lexer.{ScalaTokenType, ScalaTokenTypes}
@@ -73,7 +73,7 @@ class ScGivenDefinitionImpl(
 
   override def clauses: Option[ScParameters] = _clauses()
 
-  private val _clauses = cached("clauses", ModTracker.anyScalaPsiChange, () => {
+  private val _clauses = cached(cacheId[this.type, "clauses"], ModTracker.anyScalaPsiChange, () => {
     getStubOrPsiChild(PARAM_CLAUSES, classOf[ScParameters]).toOption
   })
 
@@ -102,7 +102,7 @@ class ScGivenDefinitionImpl(
   }
 
   override def desugaredDefinitions: Seq[ScMember] =
-    cachedInUserData("desugaredDefinitions", this, ModTracker.libraryAware(this)) {
+    cachedInUserData(cacheId[this.type, "desugaredDefinitions"], this, ModTracker.libraryAware(this)) {
       try {
         val supersText = extendsBlock.templateParents.fold("")(_.supersText)
 

@@ -15,7 +15,7 @@ import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.containers.MultiMap
 import org.intellij.lang.annotations.Language
 import org.jetbrains.annotations.{Nullable, TestOnly}
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.icons.Icons
 import org.jetbrains.plugins.scala.lang.psi.adapters.PsiClassAdapter
@@ -73,7 +73,7 @@ object SyntheticNamedElement {
     sourceFileName: String,
     isScala3LibraryDefinition: Boolean
   ): Option[ScMember] = cachedInUserData(
-    "getNavigationElementForSyntheticScalaLibraryDefinition",
+    cacheId[this.type, "getNavigationElementForSyntheticScalaLibraryDefinition"],
     element,
     projectLevelModificationTracker(project)
   ) {
@@ -88,10 +88,10 @@ object SyntheticNamedElement {
 
 
   //TODO: current implementation might not work in a project with multiple scala versions. It depends on SCL-22349.
-  private def findScala2LibrarySourcesPsiDirectoryCached(project: Project): Option[PsiDirectory] = cachedInUserData("findScala2LibrarySourcesPsiDirectory", project, projectLevelModificationTracker(project)) {
+  private def findScala2LibrarySourcesPsiDirectoryCached(project: Project): Option[PsiDirectory] = cachedInUserData(cacheId[this.type, "findScala2LibrarySourcesPsiDirectory"], project, projectLevelModificationTracker(project)) {
     findScalaLibrarySourcesPsiDirectoryInner(project, "scala.Array")
   }
-  private def findScala3LibrarySourcesPsiDirectoryCached(project: Project): Option[PsiDirectory] = cachedInUserData("findScala3LibrarySourcesPsiDirectory", project, projectLevelModificationTracker(project)) {
+  private def findScala3LibrarySourcesPsiDirectoryCached(project: Project): Option[PsiDirectory] = cachedInUserData(cacheId[this.type, "findScala3LibrarySourcesPsiDirectory"], project, projectLevelModificationTracker(project)) {
     findScalaLibrarySourcesPsiDirectoryInner(project, "scala.Tuple")
   }
 
@@ -301,7 +301,7 @@ sealed class ScSyntheticFunction(
     null
   }
 
-  override def getNavigationElement: PsiElement = cachedInUserData("ScSyntheticFunction.getNavigationElement", this, projectLevelModificationTracker(projectContext.project)) {
+  override def getNavigationElement: PsiElement = cachedInUserData(cacheId[this.type, "ScSyntheticFunction.getNavigationElement"], this, projectLevelModificationTracker(projectContext.project)) {
     val syntheticFunctionSourceMirror = containingSyntheticClass.flatMap(_.getNavigationElement match {
       case classInSources: ScTemplateDefinition =>
         //NOTE: we search for the function with the same name ignoring overloaded functions

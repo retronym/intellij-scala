@@ -4,7 +4,7 @@ import com.intellij.lang.ASTNode
 import com.intellij.openapi.diagnostic.{Attachment, Logger}
 import com.intellij.psi.impl.source.tree.CompositeElement
 import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.PsiElementExt
 import org.jetbrains.plugins.scala.lang.parser.ScalaElementType
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
@@ -108,7 +108,7 @@ object ScUnderScoreSectionUtil {
   def isUnderscoreFunction(expr: ScExpression): Boolean = underscores(expr).nonEmpty
 
   /**Collects parameters of anonymous functions in placeholder syntax*/
-  def underscores(expr: ScExpression): Seq[ScUnderscoreSection] = cachedInUserData("underscores", expr, ModTracker.anyScalaPsiChange, Tuple1(expr: ScExpression)) {
+  def underscores(expr: ScExpression): Seq[ScUnderscoreSection] = cachedInUserData(cacheId[this.type, "underscores"], expr, ModTracker.anyScalaPsiChange, Tuple1(expr: ScExpression)) {
     if (!expr.isValid) Nil else {
       val underscores = Seq.newBuilder[ScUnderscoreSection]
 

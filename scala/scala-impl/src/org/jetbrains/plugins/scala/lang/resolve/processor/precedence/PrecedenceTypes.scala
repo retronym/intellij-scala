@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala.lang.resolve.processor.precedence
 
 import com.intellij.openapi.module.Module
 import com.intellij.psi.PsiElement
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaFile
 import org.jetbrains.plugins.scala.project.ScalaLanguageLevel.Scala_2_12
 import org.jetbrains.plugins.scala.project._
@@ -78,7 +78,7 @@ object PrecedenceTypes {
 
   def forModule(module: Module): PrecedenceTypes =
     cachedInUserData(
-      "forModule",
+      cacheId[this.type, "forModule"],
       module,
       ScalaCompilerConfiguration.modTracker(module.getProject),
       Tuple1(module)

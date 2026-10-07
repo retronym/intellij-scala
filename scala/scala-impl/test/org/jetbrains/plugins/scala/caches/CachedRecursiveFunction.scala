@@ -52,7 +52,7 @@ case class CachedRecursiveFunction(name: String)(implicit projectContext: Projec
 
   def apply(): String = {
     val oldCount = calcCounter
-    val result = cachedWithRecursionGuard("apply.result", psi, "#" + name, ModTracker.physicalPsiChange(psi.getProject)) {
+    val result = cachedWithRecursionGuard(cacheId[this.type, "apply.result"], psi, "#" + name, ModTracker.physicalPsiChange(psi.getProject)) {
       calcCounter += 1
       innerCalls.map(_.apply()).mkString(name + "(", "+", ")")
     }

@@ -7,7 +7,7 @@ import com.intellij.psi._
 import com.intellij.psi.javadoc.PsiDocComment
 import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.plugins.scala.ScalaBundle
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cached, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cacheId, cached, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.lexer._
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiImplementationHelper
@@ -171,7 +171,7 @@ abstract class ScTypeDefinitionImpl[T <: ScTemplateDefinition](stub: ScTemplateD
       }
     }
 
-  private val calcFakeCompanionModule: Boolean => Option[ScObject] = cached("calcCompanionModule", ModTracker.libraryAware(this), (isImplicitValueClass: Boolean) => {
+  private val calcFakeCompanionModule: Boolean => Option[ScObject] = cached(cacheId[this.type, "calcCompanionModule"], ModTracker.libraryAware(this), (isImplicitValueClass: Boolean) => {
     val accessModifier = getModifierList.accessModifier match {
       case None     => ""
       case Some(am) => AccessModifierRenderer.simpleTextHtmlEscaped(am) + " "
@@ -207,7 +207,7 @@ abstract class ScTypeDefinitionImpl[T <: ScTemplateDefinition](stub: ScTemplateD
 
   override final def getQualifiedName: String = _getQualifiedName()
 
-  private val _getQualifiedName = cached("getQualifiedName", ModTracker.anyScalaPsiChange, () => {
+  private val _getQualifiedName = cached(cacheId[this.type, "getQualifiedName"], ModTracker.anyScalaPsiChange, () => {
     //NOTE: according to `getQualifiedName` contract
     //null should be returned for anonymous and local classes (and for type parameters, but it's not relevant here?)
     //Related: SCL-15357, KTIJ-24653
@@ -238,7 +238,7 @@ abstract class ScTypeDefinitionImpl[T <: ScTemplateDefinition](stub: ScTemplateD
 
   override def qualifiedName: String = _qualifiedName()
 
-  private val _qualifiedName = cached("qualifiedName", ModTracker.anyScalaPsiChange, () => {
+  private val _qualifiedName = cached(cacheId[this.type, "qualifiedName"], ModTracker.anyScalaPsiChange, () => {
     if (isLocalOrInsideAnonymous(this)) name
     else byStubOrPsi(_.getQualifiedName) {
       qualifiedName(DefaultSeparator, forJvmRepresentation = false)(identity)
@@ -417,22 +417,22 @@ abstract class ScTypeDefinitionImpl[T <: ScTemplateDefinition](stub: ScTemplateD
     ScalaPsiImplementationHelper.getOriginalClass(this)
 
   override def syntheticTypeDefinitions: Seq[ScTypeDefinition] =
-    cachedWithRecursionGuard("syntheticTypeDefinitions", this, Seq.empty[ScTypeDefinition], BlockModificationTracker(this)) {
+    cachedWithRecursionGuard(cacheId[this.type, "syntheticTypeDefinitions"], this, Seq.empty[ScTypeDefinition], BlockModificationTracker(this)) {
       SyntheticMembersInjector.injectInners(this)
     }
 
   override def syntheticMembers: Seq[ScMember] =
-    cachedWithRecursionGuard("syntheticMembers", this, Seq.empty[ScMember], BlockModificationTracker(this)) {
+    cachedWithRecursionGuard(cacheId[this.type, "syntheticMembers"], this, Seq.empty[ScMember], BlockModificationTracker(this)) {
       SyntheticMembersInjector.injectMembers(this)
     }
 
   override def syntheticMethods: Seq[ScFunction] =
-    cachedWithRecursionGuard("syntheticMethods", this, Seq.empty[ScFunction], BlockModificationTracker(this)) {
+    cachedWithRecursionGuard(cacheId[this.type, "syntheticMethods"], this, Seq.empty[ScFunction], BlockModificationTracker(this)) {
       SyntheticMembersInjector.inject(this)
     }
 
   override def psiMethods: Array[PsiMethod] =
-    cachedWithRecursionGuard("psiMethods", this, PsiMethod.EMPTY_ARRAY, ModTracker.libraryAware(this)) {
+    cachedWithRecursionGuard(cacheId[this.type, "psiMethods"], this, PsiMethod.EMPTY_ARRAY, ModTracker.libraryAware(this)) {
       // note: this could be optimized my not processing super classes as it's unnecessary
       val allMethods = getAllMethods
       // Filter out mixed-in methods

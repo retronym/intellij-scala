@@ -6,7 +6,7 @@ import com.intellij.psi.PsiField
 import com.intellij.psi.scope.PsiScopeProcessor
 import com.intellij.psi.tree.IElementType
 import com.intellij.psi.{PsiElement, ResolveState}
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.icons.Icons
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenType
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenType.EnumKeyword
@@ -30,7 +30,7 @@ final class ScEnumImpl(stub: ScTemplateDefinitionStub[ScClass],
   override def isEnum: Boolean = ScEnum.isJavaCompatible(this)
 
   private val getJavaEnumConstants: () => Array[PsiField] =
-    cached("getJavaEnumConstants", BlockModificationTracker(this), () => {
+    cached(cacheId[this.type, "getJavaEnumConstants"], BlockModificationTracker(this), () => {
       if (isEnum) {
         val singletons = cases.collect {
           case singletonCase: ScEnumSingletonCase => new ScLightEnumConstant(singletonCase, this)

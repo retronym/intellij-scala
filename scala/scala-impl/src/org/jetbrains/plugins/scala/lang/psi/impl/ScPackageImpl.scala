@@ -7,7 +7,7 @@ import com.intellij.psi.impl.PsiManagerEx
 import com.intellij.psi.impl.file.PsiPackageImpl
 import com.intellij.psi.scope.{NameHint, PsiScopeProcessor}
 import com.intellij.psi.search.GlobalSearchScope
-import org.jetbrains.plugins.scala.caches.{ScalaShortNamesCacheManager, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ScalaShortNamesCacheManager, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.api.base.ScEnd
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.{ScMember, ScObject}
@@ -72,7 +72,7 @@ final class ScPackageImpl private (val pack: PsiPackage)
     ScPackageImpl.findPackage(getProject, qName).map(ScPackageImpl(_)).orNull
 
   override def findPackageObject(scope: GlobalSearchScope): Option[ScObject] = cachedInUserData(
-    "findPackageObject",
+    cacheId[this.type, "findPackageObject"],
     this,
     ScalaPsiManager.instance(getProject).TopLevelModificationTracker,
     Tuple1(scope: GlobalSearchScope)
@@ -86,7 +86,7 @@ final class ScPackageImpl private (val pack: PsiPackage)
     ScalaPsiUtil.parentPackage(getQualifiedName, getProject).orNull
 
   override def getSubPackages: Array[PsiPackage] = cachedInUserData(
-    "ScPackageImpl.getSubPackages",
+    cacheId[this.type, "ScPackageImpl.getSubPackages"],
     this,
     ScalaPsiManager.instance(getProject).TopLevelModificationTracker
   ) {
@@ -95,7 +95,7 @@ final class ScPackageImpl private (val pack: PsiPackage)
   }
 
   override def getSubPackages(scope: GlobalSearchScope): Array[PsiPackage] = cachedInUserData(
-    "getSubPackages(GlobalSearchScope)",
+    cacheId[this.type, "getSubPackages(GlobalSearchScope)"],
     this,
     ScalaPsiManager.instance(getProject).TopLevelModificationTracker,
     Tuple1(scope)
