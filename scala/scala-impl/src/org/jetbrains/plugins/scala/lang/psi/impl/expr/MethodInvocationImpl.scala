@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala.lang.psi.impl.expr
 
 import com.intellij.lang.ASTNode
 import com.intellij.psi.{PsiElement, PsiMethod}
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.macros.evaluator.{MacroContext, MacroInvocationContext, ScalaMacroEvaluator}
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil._
@@ -93,7 +93,7 @@ abstract class MethodInvocationImpl(node: ASTNode) extends ScExpressionImplBase(
   //noinspection ScalaExtractStringToBundle
   private def innerTypeExt: InvocationData =
     cachedWithRecursionGuard(
-      "innerTypeExt",
+      cacheId[this.type, "innerTypeExt"],
       this,
       FailureCase(Failure("Recursive innerTypeExt"), Seq.empty): InvocationData,
       BlockModificationTracker(this)

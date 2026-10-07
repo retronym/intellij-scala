@@ -129,6 +129,7 @@ lazy val scalaCommunity: sbt.Project =
       kotlinUtils % "test->test;compile->compile",
       structuralSearch % "test->test;compile->compile",
       scalaLanguageUtils % "test->test;compile->compile",
+      scalaImplMacros,
       scalaLanguageUtilsRt % "test->test;compile->compile",
       pluginXml,
       scalaCli % "test->test;compile->compile",
@@ -406,6 +407,7 @@ lazy val scalaImpl: sbt.Project =
       compilerSettingsDefinition,
       scalaApi,
       scalaLanguageUtils,
+      scalaImplMacros,
       sbtApi,
       decompiler % "test->test;compile->compile",
       tastyReader % "test->test;compile->compile",
@@ -500,6 +502,17 @@ lazy val kotlinUtils: sbt.Project =
  */
 lazy val scalaLanguageUtils: sbt.Project =
   newPlainScalaProject("scala-utils-language", file("scala/scala-utils-language"))
+    .settings(
+      packageMethod := PackagingMethod.MergeIntoOther(scalaCommunity)
+    )
+
+/**
+ * Scala 3 macros used by [[scalaImpl]], e.g. `cacheId[this.type, "name"]`.
+ * A macro used in the module that defines it suspends its callers; in scala-impl that made a Java class from a jar
+ * fail with a cyclic reference on the second typing pass (MixinNodes.scala). Compiling the macros first avoids that.
+ */
+lazy val scalaImplMacros: sbt.Project =
+  newPlainScalaProject("scala-impl-macros", file("scala/scala-impl-macros"))
     .settings(
       packageMethod := PackagingMethod.MergeIntoOther(scalaCommunity)
     )

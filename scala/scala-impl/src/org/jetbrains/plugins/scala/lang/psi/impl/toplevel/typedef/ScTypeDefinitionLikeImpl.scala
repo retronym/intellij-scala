@@ -4,7 +4,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.impl.source.PsiFileImpl
 import com.intellij.psi.stubs.StubElement
 import org.jetbrains.plugins.scala.JavaArrayFactoryUtil.ScTypeDefinitionLikeFactory
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.ObjectExt
 import org.jetbrains.plugins.scala.lang.TokenSets.TYPE_DEFINITION_LIKES
 import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScEnumCase, ScTypeAlias}
@@ -82,7 +82,7 @@ trait ScTypeDefinitionLikeImpl extends ScTypeDefinitionLike {
       if (ctx == null)
         return findByAstViaDirectSearch
 
-      val (types, objects) = cachedInUserData("ScTypeDefinitionImpl.baseCompanion.findByAst", ctx, BlockModificationTracker(ctx)) {
+      val (types, objects) = cachedInUserData(cacheId[this.type, "ScTypeDefinitionImpl.baseCompanion.findByAst"], ctx, BlockModificationTracker(ctx)) {
         val types = Map.newBuilder[String, ScTypeDefinitionLike]
         val objects = Map.newBuilder[String, ScObject]
 

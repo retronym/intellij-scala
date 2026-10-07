@@ -1,7 +1,7 @@
 package org.jetbrains.plugins.scala.lang.psi
 
 import com.intellij.psi._
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.api.statements.ScFunction.CommonNames
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params.TypeParamIdOwner
@@ -431,7 +431,7 @@ package object types {
 
   implicit class ScalaSeqExt(private val context: PsiElement) {
     //TODO: move to org.jetbrains.plugins.scala.util.CommonQualifiedNames and reuse
-    def scalaSeqFqn: String = cachedInUserData("scalaSeqFqn", context, ScalaPsiManager.instance(context.getProject).TopLevelModificationTracker) {
+    def scalaSeqFqn: String = cachedInUserData(cacheId[this.type, "scalaSeqFqn"], context, ScalaPsiManager.instance(context.getProject).TopLevelModificationTracker) {
       if (context.newCollectionsFramework) CommonQualifiedNames.CollectionImmutableSeq
       else CommonQualifiedNames.CollectionSeq
     }

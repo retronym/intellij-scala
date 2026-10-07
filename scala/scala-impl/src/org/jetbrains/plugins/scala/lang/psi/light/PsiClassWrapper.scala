@@ -13,7 +13,7 @@ import com.intellij.psi.scope.PsiScopeProcessor
 import com.intellij.psi.scope.processor.MethodsProcessor
 import com.intellij.psi.search.{GlobalSearchScope, SearchScope}
 import com.intellij.psi.util.PsiUtil
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.lexer.ScalaModifier
 import org.jetbrains.plugins.scala.lang.psi.adapters.PsiClassAdapter
@@ -128,7 +128,7 @@ class PsiClassWrapper(
     }
   }
 
-  private val getEmptyConstructor = cached("getEmptyConstructor", BlockModificationTracker(this), () => {
+  private val getEmptyConstructor = cached(cacheId[this.type, "getEmptyConstructor"], BlockModificationTracker(this), () => {
     new EmptyPrivateConstructor(PsiClassWrapper.this)
   })
 

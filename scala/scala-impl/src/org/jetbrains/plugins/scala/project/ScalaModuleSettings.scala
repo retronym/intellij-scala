@@ -12,7 +12,7 @@ import com.intellij.util.CommonProcessors.FindProcessor
 import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.plugins.scala.ScalaVersion
-import org.jetbrains.plugins.scala.caches.cached
+import org.jetbrains.plugins.scala.caches.{cacheId, cached}
 import org.jetbrains.plugins.scala.project.ScalaFeatures.SerializableScalaFeatures
 import org.jetbrains.plugins.scala.project.ScalaLanguageLevel._
 import org.jetbrains.plugins.scala.project.settings.ScalaCompilerSettings.ScalacPlugin
@@ -337,7 +337,7 @@ object ScalaModuleSettings {
       None
 
   // Caching as the same path to the same plugin can be used in different modules
-  private val isScalaMetaParadiseJar: String => Boolean = cached("isScalaMetaParadise", ModificationTracker.NEVER_CHANGED, (pathName: String) => try {
+  private val isScalaMetaParadiseJar: String => Boolean = cached(cacheId[this.type, "isScalaMetaParadise"], ModificationTracker.NEVER_CHANGED, (pathName: String) => try {
     val jar = Path.of(pathName)
     readManifestSafely(jar).exists { manifest =>
       val attributes = manifest.getMainAttributes

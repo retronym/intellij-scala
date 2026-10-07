@@ -6,7 +6,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.impl.PsiImplUtil
 import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.plugins.scala.JavaArrayFactoryUtil
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cached, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cacheId, cached, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.TokenSets
 import org.jetbrains.plugins.scala.lang.lexer.{ScalaTokenType, ScalaTokenTypes}
@@ -32,12 +32,12 @@ class ScParameterClauseImpl private(stub: ScParamClauseStub, node: ASTNode)
 
   override def parameters: Seq[ScParameter] = _parameters()
 
-  private val _parameters = cached("parameters", ModTracker.anyScalaPsiChange, () => {
+  private val _parameters = cached(cacheId[this.type, "parameters"], ModTracker.anyScalaPsiChange, () => {
     getStubOrPsiChildren[ScParameter](TokenSets.PARAMETERS, JavaArrayFactoryUtil.ScParameterFactory).toSeq
   })
 
   override def effectiveParameters: Seq[ScParameter] =
-    cachedInUserData("effectiveParameters", this, BlockModificationTracker(this)) {
+    cachedInUserData(cacheId[this.type, "effectiveParameters"], this, BlockModificationTracker(this)) {
       if (isImplicit) {
         val syntheticParameters = syntheticContextBoundsParameters
         syntheticParameters ++ parameters
@@ -96,7 +96,7 @@ class ScParameterClauseImpl private(stub: ScParamClauseStub, node: ASTNode)
 
   override def hasImplicitKeyword: Boolean = _hasImplicitKeyword()
 
-  private val _hasImplicitKeyword = cached("isImplicit", ModTracker.anyScalaPsiChange, () => {
+  private val _hasImplicitKeyword = cached(cacheId[this.type, "isImplicit"], ModTracker.anyScalaPsiChange, () => {
     import ScModifierList._
 
     def hasImplicitKeyword =
@@ -109,7 +109,7 @@ class ScParameterClauseImpl private(stub: ScParamClauseStub, node: ASTNode)
 
   override def hasUsingKeyword: Boolean = _hasUsingKeyword()
 
-  private val _hasUsingKeyword = cached("isUsing", ModTracker.anyScalaPsiChange, () => {
+  private val _hasUsingKeyword = cached(cacheId[this.type, "isUsing"], ModTracker.anyScalaPsiChange, () => {
     def hasUsingKeyword =
       findChildByType(ScalaTokenType.UsingKeyword) != null
 

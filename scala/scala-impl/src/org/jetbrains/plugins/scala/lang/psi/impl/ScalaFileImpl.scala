@@ -17,7 +17,7 @@ import com.intellij.psi.util.PsiUtilCore
 import com.intellij.psi.{FileResolveScopeProvider, FileViewProvider, PsiClass, PsiDocumentManager, PsiElement, PsiReference}
 import com.intellij.util.ThrowableRunnable
 import org.jetbrains.annotations.Nullable
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.finder.{ResolveFilterScope, WorksheetResolveFilterScope}
 import org.jetbrains.plugins.scala.lang.TokenSets._
@@ -339,7 +339,7 @@ class ScalaFileImpl(
   override def topLevelWrapperObject: Option[PsiClass] = _topLevelWrapperObject()
 
   private val _topLevelWrapperObject =
-    cached("topLevelWrapperObject", ModTracker.anyScalaPsiChange, () => {
+    cached(cacheId[this.type, "topLevelWrapperObject"], ModTracker.anyScalaPsiChange, () => {
       val topLevelMembers    = members.filter(m => m.is[ScFunction] || m.is[ScPatternDefinition])
       val hasTopLevelMembers = topLevelMembers.nonEmpty
 
@@ -397,7 +397,7 @@ class ScalaFileImpl(
 
   override protected final def shouldNotProcessDefaultImport(fqn: String): Boolean =
     cachedInUserData(
-      "shouldNotProcessDefaultImport",
+      cacheId[this.type, "shouldNotProcessDefaultImport"],
       this,
       ScalaPsiManager.instance(getProject).TopLevelModificationTracker,
       Tuple1(fqn)

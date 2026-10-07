@@ -5,7 +5,7 @@ import com.intellij.openapi.util.Key
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.{PsiClass, PsiElement, PsiMember, PsiModifier}
 import org.jetbrains.annotations.{Nullable, TestOnly}
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions.{&, ObjectExt, Parent, StubBasedExt}
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
 import org.jetbrains.plugins.scala.lang.psi.api.base.ScPrimaryConstructor
@@ -62,7 +62,7 @@ trait ScMember extends ScalaPsiElement with ScModifierListOwner with PsiMember {
   @Nullable
   def containingClass: ScTemplateDefinition = _containingClass()
 
-  private val _containingClass = cached("containingClass", ModTracker.anyScalaPsiChange, () => {
+  private val _containingClass = cached(cacheId[this.type, "containingClass"], ModTracker.anyScalaPsiChange, () => {
     containingClass0
   })
 

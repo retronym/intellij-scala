@@ -7,7 +7,7 @@ import com.intellij.psi._
 import com.intellij.psi.util.PsiTreeUtil.getContextOfType
 import org.jetbrains.annotations.Nls
 import org.jetbrains.plugins.scala.ScalaBundle
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.macros.MacroDef
 import org.jetbrains.plugins.scala.lang.macros.evaluator.{MacroContext, ScalaMacroEvaluator}
@@ -39,7 +39,7 @@ class ScSimpleTypeElementImpl(node: ASTNode) extends ScalaPsiElementImpl(node) w
 
   override def getNonValueType(withUnnecessaryImplicitsUpdate: Boolean = false): TypeResult =
     cachedWithRecursionGuard(
-      "ScSimpleTypeElementImpl.getNonValueType",
+      cacheId[this.type, "ScSimpleTypeElementImpl.getNonValueType"],
       this,
       Failure(ScalaBundle.message("recursive.non.value.type.of.type.element")),
       BlockModificationTracker(this),

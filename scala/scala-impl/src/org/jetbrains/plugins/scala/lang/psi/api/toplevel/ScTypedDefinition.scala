@@ -1,7 +1,7 @@
 package org.jetbrains.plugins.scala.lang.psi.api.toplevel
 
 import com.intellij.psi.PsiClass
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.lang.psi.api.PropertyMethods.DefinitionRole
 import org.jetbrains.plugins.scala.lang.psi.api.statements._
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params.ScClassParameter
@@ -42,7 +42,7 @@ trait ScTypedDefinition extends ScNamedElement with Typeable {
     _getTypedDefinitionWrapper(isStatic, isAbstract, role, (cClass, substitutor))
 
   private val _getTypedDefinitionWrapper = cached(
-    "getTypedDefinitionWrapper",
+    cacheId[this.type, "getTypedDefinitionWrapper"],
     BlockModificationTracker(this),
     (isStatic: Boolean, isAbstract: Boolean, role: DefinitionRole, context: (Option[PsiClass], ScSubstitutor)) => {
       val (cClass, substitutor) = context
@@ -52,7 +52,7 @@ trait ScTypedDefinition extends ScNamedElement with Typeable {
 
   def getStaticTypedDefinitionWrapper(role: DefinitionRole, cClass: PsiClassWrapper): StaticPsiTypedDefinitionWrapper = _getStaticTypedDefinitionWrapper(role, cClass)
 
-  private val _getStaticTypedDefinitionWrapper = cached("getStaticTypedDefinitionWrapper", BlockModificationTracker(this), (role: DefinitionRole, cClass: PsiClassWrapper) => {
+  private val _getStaticTypedDefinitionWrapper = cached(cacheId[this.type, "getStaticTypedDefinitionWrapper"], BlockModificationTracker(this), (role: DefinitionRole, cClass: PsiClassWrapper) => {
     new StaticPsiTypedDefinitionWrapper(this, role, cClass)
   })
 }

@@ -1,7 +1,7 @@
 package org.jetbrains.plugins.scala.lang.psi.implicits
 
 import com.intellij.psi.{PsiElement, PsiFile}
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions.{ObjectExt, PsiElementExt, childOf}
 import org.jetbrains.plugins.scala.lang.psi.api.base.patterns.ScCaseClause
 import org.jetbrains.plugins.scala.lang.psi.api.base.{ScMethodLike, ScPrimaryConstructor}
@@ -21,7 +21,7 @@ case class ImplicitSearchScope(representative: PsiElement) {
 
   def cachedVisibleImplicits: Set[ScalaResolveResult] =
     cachedWithRecursionGuard(
-      "cachedVisibleImplicits",
+      cacheId[this.type, "cachedVisibleImplicits"],
       representative,
       Set.empty[ScalaResolveResult],
       BlockModificationTracker(representative)
@@ -31,7 +31,7 @@ case class ImplicitSearchScope(representative: PsiElement) {
 
   def cachedVisibleImplicitsByLevel: collection.Seq[collection.Set[ScalaResolveResult]] =
     cachedWithRecursionGuard(
-      "cachedVisibleImplicitsByLevel",
+      cacheId[this.type, "cachedVisibleImplicitsByLevel"],
       representative,
       collection.Seq.empty[collection.Set[ScalaResolveResult]],
       BlockModificationTracker(representative)
@@ -41,7 +41,7 @@ case class ImplicitSearchScope(representative: PsiElement) {
 
   def cachedImplicitsByType(scType: ScType): Set[ScalaResolveResult] =
     cachedWithRecursionGuard(
-      "cachedImplicitsByType",
+      cacheId[this.type, "cachedImplicitsByType"],
       representative,
       Set.empty[ScalaResolveResult],
       BlockModificationTracker(representative),

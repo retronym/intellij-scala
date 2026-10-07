@@ -24,7 +24,7 @@ import com.intellij.psi.{LanguageSubstitutors, PsiElement, PsiFile}
 import com.intellij.util.PathsList
 import org.jetbrains.annotations.{ApiStatus, TestOnly}
 import org.jetbrains.jps.model.serialization.library.JpsLibraryTableSerializer
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.compiler.data.CompileOrder
 import org.jetbrains.plugins.scala.extensions.*
 import org.jetbrains.plugins.scala.lang.formatting.settings.ScalaCodeStyleSettings
@@ -212,7 +212,7 @@ package object project {
     // Bailing out early also avoids the project-service lookups that `cachedInUserData` performs.
     private def scalaModuleSettings: Option[ScalaModuleSettings] =
       if (module.isDisposed) None
-      else cachedInUserData("scalaModuleSettings", module, ScalaCompilerConfiguration.modTracker(module.getProject)) {
+      else cachedInUserData(cacheId[this.type, "scalaModuleSettings"], module, ScalaCompilerConfiguration.modTracker(module.getProject)) {
         ScalaModuleSettings(module)
       }
 
@@ -295,7 +295,7 @@ package object project {
      * Selects dependent module for shared-sources module<br>
      * It first search for JVM, then for Js and then for Native
      */
-    def findRepresentativeModuleForSharedSourceModule: Option[Module] = cachedInUserData("findRepresentativeModuleForSharedSourceModule", module, ScalaCompilerConfiguration.modTracker(module.getProject)) {
+    def findRepresentativeModuleForSharedSourceModule: Option[Module] = cachedInUserData(cacheId[this.type, "findRepresentativeModuleForSharedSourceModule"], module, ScalaCompilerConfiguration.modTracker(module.getProject)) {
       if (isSharedSourceModule) {
         val sharedSourcesOwnerModules = getSharedSourcesModulesOwners(module)
         sharedSourcesOwnerModules.find(_.isJvmModule)
@@ -545,7 +545,7 @@ package object project {
      *       large projects with many modules. Therefore, checking for cancellation often can be very helpful.
      */
     // TODO Generalize: hasScala(Version => Boolean), hasScala(_ >= Scala3)
-    def hasScala2: Boolean = cachedInUserData("hasScala2", project, ProjectRootManager.getInstance(project)) {
+    def hasScala2: Boolean = cachedInUserData(cacheId[this.type, "hasScala2"], project, ProjectRootManager.getInstance(project)) {
       modulesWithScala.exists { m =>
         ProgressManager.checkCanceled()
         m.scalaLanguageLevel.exists(_.isScala2)
@@ -557,7 +557,7 @@ package object project {
      *       the project structure and dropped caches, this can end up being a very expensive method, especially in
      *       large projects with many modules. Therefore, checking for cancellation often can be very helpful.
      */
-    def hasScala3: Boolean = cachedInUserData("hasScala3", project, ProjectRootManager.getInstance(project)) {
+    def hasScala3: Boolean = cachedInUserData(cacheId[this.type, "hasScala3"], project, ProjectRootManager.getInstance(project)) {
       modulesWithScala.exists { m =>
         ProgressManager.checkCanceled()
         m.hasScala3
@@ -589,7 +589,7 @@ package object project {
      *       the project structure and dropped caches, this can end up being a very expensive method, especially in
      *       large projects with many modules. Therefore, checking for cancellation often can be very helpful.
      */
-    private def modulesWithScalaCached: Seq[Module] = cachedInUserData("modulesWithScalaCached", project, ProjectRootManager.getInstance(project)) {
+    private def modulesWithScalaCached: Seq[Module] = cachedInUserData(cacheId[this.type, "modulesWithScalaCached"], project, ProjectRootManager.getInstance(project)) {
       modules.filter { m =>
         ProgressManager.checkCanceled()
         m.hasScala && !m.isBuildModule
@@ -661,7 +661,7 @@ package object project {
 
     /** TODO: document, maybe even rename to something better, like "actual module", "effective module" */
     def module: Option[Module] = attachedFileModule.orElse {
-      cachedInUserData("module", file, ProjectRootManager.getInstance(file.getProject)) {
+      cachedInUserData(cacheId[this.type, "module"], file, ProjectRootManager.getInstance(file.getProject)) {
         inReadAction { // assuming that most of the time it will be read from cache
           val module = {
             val virtualFile = if (file.getVirtualFile != null) file.getVirtualFile else file.getOriginalFile.getVirtualFile

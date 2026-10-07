@@ -5,7 +5,7 @@ import com.intellij.openapi.module.Module
 import com.intellij.psi.PsiElement
 import com.intellij.testIntegration.createTest.CreateTestAction
 import org.jetbrains.plugins.scala.ScalaVersion
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.project.settings.ScalaCompilerConfiguration
 import org.jetbrains.plugins.scala.project.{ModuleExt, ProjectPsiElementExt, Version}
 
@@ -34,7 +34,7 @@ object UTestVersionUtils {
    * @note If you have an instance of production module, you can extract the corresponding test module using
    *       [[com.intellij.testIntegration.createTest.CreateTestAction.suggestModuleForTests]]
    */
-  def getUTestLibraryVersion(module: Module): Option[Version] = cachedInUserData("UTestUtils.getUTestLibraryVersion", module, ScalaCompilerConfiguration.modTracker(module.getProject)) {
+  def getUTestLibraryVersion(module: Module): Option[Version] = cachedInUserData(cacheId[this.type, "UTestUtils.getUTestLibraryVersion"], module, ScalaCompilerConfiguration.modTracker(module.getProject)) {
     if (module.isDisposed || module.getProject.isDefault)
       return None
 

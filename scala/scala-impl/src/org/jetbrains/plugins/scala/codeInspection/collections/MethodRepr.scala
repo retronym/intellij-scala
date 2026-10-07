@@ -1,6 +1,6 @@
 package org.jetbrains.plugins.scala.codeInspection.collections
 
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.lang.psi.api.expr._
 import org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiElementFactory
 
@@ -17,7 +17,7 @@ object MethodRepr {
   def unapply(expr: ScExpression): Option[(ScExpression, Option[ScExpression], Option[ScReferenceExpression], Seq[ScExpression])] = expr match {
     case null => None
     //it is invoked very often in inspection, so BlockModificationTracker would be to heavy
-    case expr => cachedInUserData("unapply", expr, ModTracker.anyScalaPsiChange, Tuple1(expr)) {
+    case expr => cachedInUserData(cacheId[this.type, "unapply"], expr, ModTracker.anyScalaPsiChange, Tuple1(expr)) {
       expr match {
         case call: ScMethodCall =>
           val args = call.args.exprs.map(stripped)

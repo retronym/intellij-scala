@@ -8,7 +8,7 @@ import com.intellij.psi._
 import com.intellij.psi.scope.PsiScopeProcessor
 import com.intellij.psi.tree.IElementType
 import com.intellij.psi.util.PsiUtil
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.icons.Icons
 import org.jetbrains.plugins.scala.lang.lexer.{ScalaTokenType, ScalaTokenTypes}
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
@@ -122,7 +122,7 @@ class ScObjectImpl(
 
   override def fakeCompanionClass: Option[PsiClass] = _fakeCompanionClass()
 
-  private val _fakeCompanionClass = cached("fakeCompanionClass", BlockModificationTracker(this), () => {
+  private val _fakeCompanionClass = cached(cacheId[this.type, "fakeCompanionClass"], BlockModificationTracker(this), () => {
     getCompanionModule(this) match {
       case Some(_) => None
       case None =>
@@ -137,7 +137,7 @@ class ScObjectImpl(
     case _ => getCompanionModule(this).get
   }
 
-  private val getModuleField: () => Option[PsiField] = cached("getModuleField", BlockModificationTracker(this), () => {
+  private val getModuleField: () => Option[PsiField] = cached(cacheId[this.type, "getModuleField"], BlockModificationTracker(this), () => {
     def hasJavaKeywords(qName: String) =
       qName.split('.').exists(PsiUtil.isKeyword(_, PsiUtil.getLanguageLevel(this.getProject)))
 
@@ -163,7 +163,7 @@ class ScObjectImpl(
 
   override def getConstructors: Array[PsiMethod] = _getConstructors()
 
-  private val _getConstructors: () => Array[PsiMethod] = cached("getConstructors", BlockModificationTracker(this), () => {
+  private val _getConstructors: () => Array[PsiMethod] = cached(cacheId[this.type, "getConstructors"], BlockModificationTracker(this), () => {
     Array[PsiMethod](new EmptyPrivateConstructor(this))
   })
 

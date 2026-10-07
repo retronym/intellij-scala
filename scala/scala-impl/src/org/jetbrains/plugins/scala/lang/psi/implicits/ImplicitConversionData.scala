@@ -5,7 +5,7 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.{PsiElement, PsiNamedElement}
 import org.jetbrains.plugins.scala.autoImport.GlobalImplicitConversion
 import org.jetbrains.plugins.scala.autoImport.GlobalMember.findGlobalMembers
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.{NonNullObjectExt, ObjectExt, PsiClassExt, PsiElementExt, PsiNamedElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.expr.ScExpression
 import org.jetbrains.plugins.scala.lang.psi.api.statements.ScFunction
@@ -144,7 +144,7 @@ object ImplicitConversionData {
     }
 
   private def fromRegularImplicitConversion(function: ScFunction, substitutor: ScSubstitutor): Option[ImplicitConversionData] = {
-    val rawCheck: Option[ImplicitConversionData] = cachedInUserData("fromRegularImplicitConversion.rawCheck", function, ModTracker.libraryAware(function), Tuple1(function)) {
+    val rawCheck: Option[ImplicitConversionData] = cachedInUserData(cacheId[this.type, "fromRegularImplicitConversion.rawCheck"], function, ModTracker.libraryAware(function), Tuple1(function)) {
       for {
         retType   <- function.returnType.toOption
         param <- function.parameters.headOption
@@ -158,7 +158,7 @@ object ImplicitConversionData {
   }
 
   private def fromElementWithFunctionType(named: PsiNamedElement & Typeable, substitutor: ScSubstitutor)(implicit context: Context): Option[ImplicitConversionData] = {
-    val rawCheck: Option[ImplicitConversionData] = cachedInUserData("fromElementWithFunctionType.rawCheck", named, ModTracker.libraryAware(named), Tuple1(named)) {
+    val rawCheck: Option[ImplicitConversionData] = cachedInUserData(cacheId[this.type, "fromElementWithFunctionType.rawCheck"], named, ModTracker.libraryAware(named), Tuple1(named)) {
       for {
         function1Type <- named.elementScope.cachedFunction1Type
         elementType   <- named.`type`().toOption

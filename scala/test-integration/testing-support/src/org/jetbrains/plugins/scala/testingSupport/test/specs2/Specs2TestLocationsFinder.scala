@@ -3,7 +3,7 @@ package org.jetbrains.plugins.scala.testingSupport.test.specs2
 import com.intellij.psi.PsiElement
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.concurrency.annotations.RequiresReadLock
-import org.jetbrains.plugins.scala.caches.{CachesUtil, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{CachesUtil, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.lang.psi.api.expr.ScInfixExpr
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTypeDefinition
 import org.jetbrains.plugins.scala.testingSupport.test.structureView.TestNodeProvider
@@ -25,7 +25,7 @@ object Specs2TestLocationsFinder {
   @RequiresReadLock
   def calculateTestLocations(definition: ScTypeDefinition): Seq[PsiElement] =
     cachedInUserData(
-      "Specs2TestLocationsFinder.calculateTestLocations",
+      cacheId[this.type, "Specs2TestLocationsFinder.calculateTestLocations"],
       definition,
       CachesUtil.fileModTracker(definition.getContainingFile),
       Tuple1(definition)

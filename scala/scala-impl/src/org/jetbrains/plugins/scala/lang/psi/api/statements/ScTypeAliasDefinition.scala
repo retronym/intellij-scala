@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala.lang.psi.api.statements
 
 import com.intellij.psi.PsiClass
 import org.jetbrains.plugins.scala.ScalaBundle
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.ObjectExt
 import org.jetbrains.plugins.scala.lang.psi.api.base.types.{ScMatchTypeElement, ScTypeElement}
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.ScTypeParametersOwner
@@ -22,7 +22,7 @@ trait ScTypeAliasDefinition extends ScTypeAlias {
 
   def aliasedTypeElement: Option[ScTypeElement]
 
-  def aliasedType: TypeResult = cachedInUserData("aliasedType", this, BlockModificationTracker(this)) {
+  def aliasedType: TypeResult = cachedInUserData(cacheId[this.type, "aliasedType"], this, BlockModificationTracker(this)) {
     aliasedTypeElement.map {
       _.`type`()
     }.getOrElse(Failure(ScalaBundle.message("no.alias.type")))

@@ -4,7 +4,7 @@ import com.intellij.lang.java.JavaLanguage
 import com.intellij.psi._
 import com.intellij.psi.impl.source.resolve.JavaResolveUtil
 import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil._
@@ -440,7 +440,7 @@ object ResolveUtils {
       withImplicits: Boolean
     ): Array[ScalaResolveResult] =
       cachedWithRecursionGuard(
-        "tryResolveApplyMethod",
+        cacheId[this.type, "tryResolveApplyMethod"],
         expr,
         Array.empty[ScalaResolveResult],
         BlockModificationTracker(expr),

@@ -3,7 +3,7 @@ package org.jetbrains.plugins.scala.lang.psi.api.expr
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi._
 import com.intellij.psi.impl.source.codeStyle.CodeEditUtil
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil.{MethodValue, isAnonymousExpression}
 import org.jetbrains.plugins.scala.lang.psi.api.InferUtil.{ImplicitArgumentsClause, SafeCheckException}
@@ -151,7 +151,7 @@ trait ScExpression extends ScBlockStatement
     fromUnderscore:  Boolean        = false
   ): ExpressionTypeResult =
     cachedWithRecursionGuard(
-      "ScExpression.getTypeAfterImplicitConversion",
+      cacheId[this.type, "ScExpression.getTypeAfterImplicitConversion"],
       this,
       ExpressionTypeResult(Failure(NlsString.force("Recursive getTypeAfterImplicitConversion"))),
       BlockModificationTracker(this),
@@ -236,7 +236,7 @@ object ScExpression {
 
     def expectedTypesEx(fromUnderscore: Boolean = true): Array[ParameterType] =
       cachedWithRecursionGuard(
-        "expectedTypesEx",
+        cacheId[this.type, "expectedTypesEx"],
         expr,
         Array.empty[ParameterType],
         BlockModificationTracker(expr),
@@ -247,7 +247,7 @@ object ScExpression {
 
     def smartExpectedType(fromUnderscore: Boolean = true): Option[ScType] =
       cachedWithRecursionGuard(
-        "smartExpectedType",
+        cacheId[this.type, "smartExpectedType"],
         expr,
         Option.empty[ScType],
         BlockModificationTracker(expr),
@@ -263,7 +263,7 @@ object ScExpression {
       fromUnderscore: Boolean = false
     ): TypeResult =
       cachedWithRecursionGuard(
-        "getNonValueType",
+        cacheId[this.type, "getNonValueType"],
         expr,
         Failure(NlsString.force("Recursive getNonValueType")),
         BlockModificationTracker(expr),
@@ -306,7 +306,7 @@ object ScExpression {
       fromUnderscore: Boolean = false
     ): TypeResult =
       cachedWithRecursionGuard(
-        "getTypeWithoutImplicits",
+        cacheId[this.type, "getTypeWithoutImplicits"],
         expr,
         Failure(NlsString.force("Recursive getTypeWithoutImplicits")),
         BlockModificationTracker(expr),

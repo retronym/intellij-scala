@@ -3,7 +3,7 @@ package org.jetbrains.plugins.scala.runner
 import com.intellij.openapi.project.Project
 import com.intellij.psi._
 import com.intellij.psi.search.GlobalSearchScope
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.PsiClassExt
 import org.jetbrains.plugins.scala.lang.psi.api.statements.ScFunction
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params.ScParameter
@@ -41,7 +41,7 @@ private final class Scala3MainMethodSyntheticClassFinder(project: Project)
     else null
   }
 
-  private def syntheticClassForFunction(function: ScFunction, qualifiedName: String): Scala3MainMethodSyntheticClass = cachedInUserData("syntheticClassForFunction", function, ModTracker.anyScalaPsiChange, (function, qualifiedName)) {
+  private def syntheticClassForFunction(function: ScFunction, qualifiedName: String): Scala3MainMethodSyntheticClass = cachedInUserData(cacheId[this.type, "syntheticClassForFunction"], function, ModTracker.anyScalaPsiChange, (function, qualifiedName)) {
     val params = function.parameterList.params
 
     val mainParams = if (isDefaultMainVarargs(params))

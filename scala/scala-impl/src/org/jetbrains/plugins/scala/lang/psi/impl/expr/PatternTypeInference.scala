@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala.lang.psi.impl.expr
 
 import com.intellij.psi.PsiClass
 import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.{ObjectExt, PsiElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.base.patterns._
 import org.jetbrains.plugins.scala.lang.psi.api.expr.ScMatch
@@ -149,7 +149,7 @@ object PatternTypeInference {
       case tuple: ScNamedTuplePattern => doForNamedTuplePattern(tuple, noTopLevelTypeVariables)
       case _ =>
         cachedInUserData(
-          "doTypeInference",
+          cacheId[this.type, "doTypeInference"],
           pattern,
           BlockModificationTracker(pattern),
           Tuple1(noTopLevelTypeVariables),

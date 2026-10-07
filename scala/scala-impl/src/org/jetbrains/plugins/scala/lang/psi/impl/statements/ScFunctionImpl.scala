@@ -11,7 +11,7 @@ import com.intellij.psi.util.{MethodSignatureBackedByPsiMethod, PsiTreeUtil}
 import com.intellij.ui.{IconManager, PlatformIcons}
 import com.intellij.util.containers.ContainerUtil
 import org.jetbrains.plugins.scala.ScalaBundle
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cached, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, ModTracker, cacheId, cached, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.externalLibraries.contextApplied.{ContextApplied, ContextAppliedUtil}
 import org.jetbrains.plugins.scala.icons.Icons
@@ -81,11 +81,11 @@ abstract class ScFunctionImpl[F <: ScFunction](stub: ScFunctionStub[F],
 
   override def paramClauses: ScParameters = _paramClauses()
 
-  private val _paramClauses = cached("paramClauses", ModTracker.anyScalaPsiChange, () => {
+  private val _paramClauses = cached(cacheId[this.type, "paramClauses"], ModTracker.anyScalaPsiChange, () => {
     getStubOrPsiChild(ScalaElementType.PARAM_CLAUSES, classOf[ScParameters])
   })
 
-  override def syntheticContextAppliedDefs: Seq[ScalaPsiElement] = cachedInUserData("syntheticContextAppliedDefs", this, BlockModificationTracker(this)) {
+  override def syntheticContextAppliedDefs: Seq[ScalaPsiElement] = cachedInUserData(cacheId[this.type, "syntheticContextAppliedDefs"], this, BlockModificationTracker(this)) {
     ContextAppliedUtil.createSyntheticElementsFor(this, this.containingClass, parameters, typeParameters)
   }
 
@@ -126,7 +126,7 @@ abstract class ScFunctionImpl[F <: ScFunction](stub: ScFunctionStub[F],
 
   override def returnTypeElement: Option[ScTypeElement] = _returnTypeElement()
 
-  private val _returnTypeElement = cached("returnTypeElement", ModTracker.anyScalaPsiChange, () => {
+  private val _returnTypeElement = cached(cacheId[this.type, "returnTypeElement"], ModTracker.anyScalaPsiChange, () => {
     byPsiOrStub(findChild[ScTypeElement])(_.typeElement)
   })
 
@@ -163,7 +163,7 @@ abstract class ScFunctionImpl[F <: ScFunction](stub: ScFunctionStub[F],
       case _                   => tpe
     }
 
-    cachedInUserData("getReturnType", this, BlockModificationTracker(this)) {
+    cachedInUserData(cacheId[this.type, "getReturnType"], this, BlockModificationTracker(this)) {
       val resultType = unwrapFunctionType(`type`().getOrAny)
       resultType.toPsiType
     }
@@ -243,7 +243,7 @@ abstract class ScFunctionImpl[F <: ScFunction](stub: ScFunctionStub[F],
     }
 
   override def effectiveSignatureClauses: Seq[ScSignatureClause] =
-    cachedInUserData("effectiveSignatureClauses", this, BlockModificationTracker(this)) {
+    cachedInUserData(cacheId[this.type, "effectiveSignatureClauses"], this, BlockModificationTracker(this)) {
       val typeParams =
         if (isConstructor) {
           containingClass match {
@@ -275,7 +275,7 @@ abstract class ScFunctionImpl[F <: ScFunction](stub: ScFunctionStub[F],
 
   private val _getFunctionWrappers =
     cached(
-      "getFunctionWrappers",
+      cacheId[this.type, "getFunctionWrappers"],
       BlockModificationTracker(this),
       (isStatic: Boolean, isAbstract: Boolean, isExportForwarder: Boolean, context: (Option[PsiClass], ScSubstitutor)) => {
         val (cClass, substitutor) = context

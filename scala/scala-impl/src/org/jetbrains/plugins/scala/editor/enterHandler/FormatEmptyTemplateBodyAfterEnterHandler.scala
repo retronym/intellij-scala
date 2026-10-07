@@ -6,7 +6,7 @@ import com.intellij.codeInsight.editorActions.enter.EnterHandlerDelegateAdapter
 import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.editor.Editor
 import com.intellij.psi.{PsiFile, PsiWhiteSpace}
-import org.jetbrains.plugins.scala.caches.measure
+import org.jetbrains.plugins.scala.caches.{cacheId, measure}
 import org.jetbrains.plugins.scala.extensions.{&, ElementType, ObjectExt, Parent, PsiElementExt}
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenTypes
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaFile
@@ -27,7 +27,7 @@ import org.jetbrains.plugins.scala.lang.psi.api.toplevel.templates.ScTemplateBod
  */
 final class FormatEmptyTemplateBodyAfterEnterHandler extends EnterHandlerDelegateAdapter {
 
-  override def postProcessEnter(file: PsiFile, editor: Editor, dataContext: DataContext): Result = measure("FormatEmptyTemplateBodyAfterEnterHandler.postProcessEnter") {
+  override def postProcessEnter(file: PsiFile, editor: Editor, dataContext: DataContext): Result = measure(cacheId[this.type, "FormatEmptyTemplateBodyAfterEnterHandler.postProcessEnter"]) {
     if (!isApplicable(file))
       return Result.Continue
 

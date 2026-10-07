@@ -3,7 +3,7 @@ package org.jetbrains.plugins.scala.lang.psi.api.statements.params
 import com.intellij.openapi.project.DumbService
 import com.intellij.psi._
 import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.icons.Icons
 import org.jetbrains.plugins.scala.lang.psi.adapters.PsiParameterAdapter
 import org.jetbrains.plugins.scala.lang.psi.api.base.ScPrimaryConstructor
@@ -160,7 +160,7 @@ trait ScParameter extends ScTypedDefinition
   // TODO hasDefaultArgument
   def isDefaultParam: Boolean = _isDefaultParam()
 
-  private val _isDefaultParam = cached("isDefaultParam", BlockModificationTracker(this), () => {
+  private val _isDefaultParam = cached(cacheId[this.type, "isDefaultParam"], BlockModificationTracker(this), () => {
     calcIsDefaultParam(this, Set.empty)
   })
 

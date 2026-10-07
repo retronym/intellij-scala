@@ -1,7 +1,7 @@
 package org.jetbrains.plugins.scala.lang.psi.api.base
 package types
 
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cached}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cached}
 
 trait ScParameterizedTypeElement extends ScDesugarizableTypeElement {
   override protected val typeName = "ParametrizedType"
@@ -28,7 +28,7 @@ object ScParameterizedTypeElement {
 trait ScDesugarizableToParametrizedTypeElement extends ScDesugarizableTypeElement {
   override final def computeDesugarizedType: Option[ScParameterizedTypeElement] = _computeDesugarizedType()
 
-  private val _computeDesugarizedType = cached("computeDesugarizedType", BlockModificationTracker(this), () => {
+  private val _computeDesugarizedType = cached(cacheId[this.type, "computeDesugarizedType"], BlockModificationTracker(this), () => {
     super.computeDesugarizedType match {
       case Some(typeElement: ScParameterizedTypeElement) => Some(typeElement)
       case _ => None

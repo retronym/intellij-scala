@@ -7,7 +7,7 @@ import com.intellij.psi.tree.TokenSet
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.{PsiElement, ResolveState}
 import org.jetbrains.plugins.scala.JavaArrayFactoryUtil._
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.lang.TokenSets._
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenTypes
 import org.jetbrains.plugins.scala.lang.parser.ScalaElementType.{EXTENSION, EnumCases, SELF_TYPE, TEMPLATE_BODY}
@@ -67,7 +67,7 @@ class ScTemplateBodyImpl private(stub: ScTemplateBodyStub, node: ASTNode)
 
   override def selfTypeElement: Option[ScSelfTypeElement] = _selfTypeElement()
 
-  private val _selfTypeElement = cached("selfTypeElement", ModTracker.anyScalaPsiChange, () => {
+  private val _selfTypeElement = cached(cacheId[this.type, "selfTypeElement"], ModTracker.anyScalaPsiChange, () => {
     Option(getStubOrPsiChild(SELF_TYPE, classOf[ScSelfTypeElement]))
   })
 
@@ -91,7 +91,7 @@ class ScTemplateBodyImpl private(stub: ScTemplateBodyStub, node: ASTNode)
 
   override def isEmpty: Boolean = _isEmpty()
 
-  private val _isEmpty = cached("isEmpty", ModTracker.anyScalaPsiChange, () => {
+  private val _isEmpty = cached(cacheId[this.type, "isEmpty"], ModTracker.anyScalaPsiChange, () => {
     getStubOrPsiChildren(TokenSet.ANY, PsiElementFactory)
       .forall { child =>
         val node = child.getNode

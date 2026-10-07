@@ -7,7 +7,7 @@ import com.intellij.psi.impl.{ElementBase, ElementPresentationUtil}
 import com.intellij.psi.util.InheritanceUtil
 import com.intellij.psi.{CommonClassNames, JavaPsiFacade, PsiModifier, PsiModifierListOwner}
 import com.intellij.ui.{IconManager, PlatformIcons}
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.PsiModifierListOwnerExt
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTypeDefinition
 
@@ -67,7 +67,7 @@ object ScalaElementPresentationUtil {
    */
   private def getScalaClassKind(element: PsiModifierListOwner): ScalaClassKind = element match {
     case obj: ScTypeDefinition =>
-      cachedInUserData("ScalaElementPresentationUtil.getRunnableFlags", obj, BlockModificationTracker(obj)) {
+      cachedInUserData(cacheId[this.type, "ScalaElementPresentationUtil.getRunnableFlags"], obj, BlockModificationTracker(obj)) {
         getScalaClassKindImpl(obj)
       }
     case _ =>

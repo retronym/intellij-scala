@@ -6,7 +6,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi._
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.plugins.scala.ScalaBundle
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenType
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil.MethodValueExtractor
@@ -103,7 +103,7 @@ object Compatibility {
           else if (!checkImplicits) default
           else
             cachedWithRecursionGuard(
-              "getTypeAfterImplicitConversion",
+              cacheId[this.type, "getTypeAfterImplicitConversion"],
               e,
               default,
               BlockModificationTracker(e),

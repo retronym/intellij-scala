@@ -4,7 +4,7 @@ import com.intellij.lang.ASTNode
 import com.intellij.psi._
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.IncorrectOperationException
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.lexer.{ScalaModifier, ScalaTokenTypes}
 import org.jetbrains.plugins.scala.lang.psi.api.base.patterns.ScBindingPattern
@@ -66,7 +66,7 @@ class ScReferenceExpressionImpl(node: ASTNode) extends ScReferenceImpl(node) wit
         value.resolveAssignment.toArray
       case None =>
         cachedWithRecursionGuard(
-          "multiResolveScala",
+          cacheId[this.type, "multiResolveScala"],
           this,
           ScalaResolveResult.EMPTY_ARRAY,
           BlockModificationTracker(this),
@@ -88,7 +88,7 @@ class ScReferenceExpressionImpl(node: ASTNode) extends ScReferenceImpl(node) wit
     maybeAssignmentResult match {
       case Some(value) =>
         value.shapeResolveAssignment.toArray
-      case None => cachedWithRecursionGuard("shapeResolve", this, ScalaResolveResult.EMPTY_ARRAY, BlockModificationTracker(this)) {
+      case None => cachedWithRecursionGuard(cacheId[this.type, "shapeResolve"], this, ScalaResolveResult.EMPTY_ARRAY, BlockModificationTracker(this)) {
         new ReferenceExpressionResolver().resolve(this, shapesOnly = true, incomplete = false)
       }
     }

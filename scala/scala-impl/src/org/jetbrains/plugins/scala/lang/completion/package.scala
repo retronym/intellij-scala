@@ -12,7 +12,7 @@ import com.intellij.psi.tree.IElementType
 import com.intellij.psi.util.PsiTreeUtil.{getContextOfType, getParentOfType}
 import com.intellij.util.{Consumer, ProcessingContext}
 import org.jetbrains.plugins.scala.caches.BlockModificationTracker.hasStableType
-import org.jetbrains.plugins.scala.caches.{CachesUtil, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{CachesUtil, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.completion.lookups.ScalaLookupItem
 import org.jetbrains.plugins.scala.lang.completion.weighter.ScalaByExpectedTypeWeigher
@@ -283,7 +283,7 @@ package object completion {
     }
 
     // A possible modification of CompilerTypeKey user data is not a PSI modification
-    cachedInUserData("mirrorPosition", originalFile, CachesUtil.fileModTracker(originalFile), Tuple1(positionInCompletionFile, compilerType)) {
+    cachedInUserData(cacheId[this.type, "mirrorPosition"], originalFile, CachesUtil.fileModTracker(originalFile), Tuple1(positionInCompletionFile, compilerType)) {
       //todo: we may probably choose a smaller fragment to copy in many cases SCL-17106
       for {
         anchor           <- locallyStableParent(placeInOriginalFile)

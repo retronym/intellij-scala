@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala.lang.psi.api.toplevel
 
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi._
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.parser.ScalaElementType
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaPsiElement
@@ -13,7 +13,7 @@ trait ScTypeParametersOwner extends ScalaPsiElement {
 
   def typeParameters: Seq[ScTypeParam] = _typeParameters()
 
-  private val _typeParameters = cached("typeParameters", ModTracker.anyScalaPsiChange, () => {
+  private val _typeParameters = cached(cacheId[this.type, "typeParameters"], ModTracker.anyScalaPsiChange, () => {
     typeParameterClauses.flatMap(_.typeParameters)
   })
 
@@ -23,7 +23,7 @@ trait ScTypeParametersOwner extends ScalaPsiElement {
    */
   def typeParameterClauses: Seq[ScTypeParamClause] = _typeParameterClauses()
 
-  private val _typeParameterClauses = cached("typeParameterClauses", ModTracker.anyScalaPsiChange, () => {
+  private val _typeParameterClauses = cached(cacheId[this.type, "typeParameterClauses"], ModTracker.anyScalaPsiChange, () => {
     val leadingClause = leadingTypeParametersClause
 
     val interleavedClauses = this match {

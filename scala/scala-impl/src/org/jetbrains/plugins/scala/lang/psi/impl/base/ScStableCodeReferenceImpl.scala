@@ -9,7 +9,7 @@ import com.intellij.util.IncorrectOperationException
 import org.jetbrains.annotations.Nullable
 import org.jetbrains.plugins.scala.Tracing
 import org.jetbrains.plugins.scala.autoImport.quickFix.{ClassToImport, ElementToImport, MemberToImport}
-import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cachedWithRecursionGuard}
+import org.jetbrains.plugins.scala.caches.{BlockModificationTracker, cacheId, cachedWithRecursionGuard}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.formatting.settings.ScalaCodeStyleSettings
 import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenTypes
@@ -315,7 +315,7 @@ class ScStableCodeReferenceImpl(node: ASTNode) extends ScReferenceImpl(node) wit
 
   override def multiResolveScala(incomplete: Boolean): Array[ScalaResolveResult] =
     cachedWithRecursionGuard(
-      "multiResolveScala",
+      cacheId[this.type, "multiResolveScala"],
       this,
       ScalaResolveResult.EMPTY_ARRAY,
       BlockModificationTracker(this),

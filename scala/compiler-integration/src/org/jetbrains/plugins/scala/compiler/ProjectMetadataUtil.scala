@@ -4,7 +4,7 @@ import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectRootManager
 import org.jetbrains.jps.incremental.scala.ScalaJpsProjectMetadata
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.project.ProjectExt
 import org.jetbrains.sbt.project.settings.DisplayModuleName
 
@@ -15,7 +15,7 @@ private object ProjectMetadataUtil {
    * to the JPS build process about the project to avoid recomputing the data on each build.
    */
   def jpsProjectMetadata(project: Project): ScalaJpsProjectMetadata =
-    cachedInUserData("scalaJpsProjectMetadata", project, ProjectRootManager.getInstance(project)) {
+    cachedInUserData(cacheId[this.type, "scalaJpsProjectMetadata"], project, ProjectRootManager.getInstance(project)) {
       val modulesWithScalaSdk = project.modulesWithScala.map(_.getName).toSet
       val useModuleDisplayName = computeUseModuleDisplayName(project)
       ScalaJpsProjectMetadata(modulesWithScalaSdk, useModuleDisplayName)

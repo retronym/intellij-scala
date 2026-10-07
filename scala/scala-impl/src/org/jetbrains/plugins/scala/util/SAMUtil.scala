@@ -1,7 +1,7 @@
 package org.jetbrains.plugins.scala.util
 
 import com.intellij.psi._
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.ElementScope
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil.MethodValue
@@ -19,7 +19,7 @@ import org.jetbrains.plugins.scala.project._
 
 object SAMUtil {
   implicit class ScExpressionExt(private val expr: ScExpression) extends AnyVal {
-    def samTypeParent: Option[PsiClass] = cachedInUserData("samTypeParent", expr, ModTracker.physicalPsiChange(expr.getProject)) {
+    def samTypeParent: Option[PsiClass] = cachedInUserData(cacheId[this.type, "samTypeParent"], expr, ModTracker.physicalPsiChange(expr.getProject)) {
       if (expr.isSAMEnabled && isFunctionalExpression(expr)) {
         for {
           pt  <- expr.expectedType(fromUnderscore = false)
@@ -140,11 +140,11 @@ object SAMUtil {
   }
 
   implicit class PsiClassToSAMExt(private val cls: PsiClass) extends AnyVal {
-    def isSAMable: Boolean = cachedInUserData("isSAMable", cls, ScalaPsiManager.instance(cls.getProject).TopLevelModificationTracker) {
+    def isSAMable: Boolean = cachedInUserData(cacheId[this.type, "isSAMable"], cls, ScalaPsiManager.instance(cls.getProject).TopLevelModificationTracker) {
       hasValidConstructorAndSelfType(cls) && singleAbstractMethod(cls).isDefined
     }
 
-    private[SAMUtil] def singleAbstractMethodWithSubstitutor: Option[(PsiMethod, ScSubstitutor)] = cachedInUserData("singleAbstractMethodWithSubstitutor", cls, ScalaPsiManager.instance(cls.getProject).TopLevelModificationTracker) {
+    private[SAMUtil] def singleAbstractMethodWithSubstitutor: Option[(PsiMethod, ScSubstitutor)] = cachedInUserData(cacheId[this.type, "singleAbstractMethodWithSubstitutor"], cls, ScalaPsiManager.instance(cls.getProject).TopLevelModificationTracker) {
       val abstractMembers = TypeDefinitionMembers.getSignatures(cls).allSignatures.filter(_.isAbstract).toSeq
       abstractMembers match {
         case Seq(PhysicalMethodSignature(m: PsiMethod, subst))

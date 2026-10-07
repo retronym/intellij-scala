@@ -4,7 +4,7 @@ import com.intellij.openapi.diagnostic.{ControlFlowException, Logger}
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.{DumbService, Project}
 import com.intellij.psi.PsiElement
-import org.jetbrains.plugins.scala.caches.{ModTracker, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.components.libextensions.DynamicExtensionPoint
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil
 import org.jetbrains.plugins.scala.lang.psi.api.base.types.ScTypeElement
@@ -209,7 +209,7 @@ object SyntheticMembersInjector {
     val extendsBlock = td.extendsBlock
 
     extendsBlock.templateBody.getOrElse {
-      cachedInUserData("templateBodyOrSynthetic", td, ModTracker.libraryAware(td)) {
+      cachedInUserData(cacheId[this.type, "templateBodyOrSynthetic"], td, ModTracker.libraryAware(td)) {
         val body = ScalaPsiElementFactory.createTemplateBody(isGiven = false, features = extendsBlock)(using td.getProject)
         body.context = extendsBlock
         body.child = extendsBlock.getLastChild
