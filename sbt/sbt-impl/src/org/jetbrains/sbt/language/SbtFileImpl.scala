@@ -6,7 +6,7 @@ import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.psi.*
 import com.intellij.psi.search.{GlobalSearchScope, searches}
 import org.jetbrains.annotations.NonNls
-import org.jetbrains.plugins.scala.caches.{ModTracker, cached, cachedInUserData}
+import org.jetbrains.plugins.scala.caches.{ModTracker, cacheId, cached, cachedInUserData}
 import org.jetbrains.plugins.scala.extensions.PsiClassExt
 import org.jetbrains.plugins.scala.lang.psi.ScDeclarationSequenceHolder
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTypeDefinition
@@ -37,7 +37,7 @@ final class SbtFileImpl private[language](provider: FileViewProvider)
         file.processDeclarations(processor, state, file.getLastChild, place)
       }
 
-  private val syntheticFile = cached("syntheticFile", ModTracker.physicalPsiChange(getProject), () => {
+  private val syntheticFile = cached(cacheId[this.type, "syntheticFile"], ModTracker.physicalPsiChange(getProject), () => {
     implicit val manager: ScalaPsiManager = ScalaPsiManager.instance(getProject)
     @NonNls val imports = importsFor(targetModule).map {
       // TODO this is a workaround, we need to find out why references stopped resolving via the chained imports
@@ -68,7 +68,7 @@ final class SbtFileImpl private[language](provider: FileViewProvider)
     }
   }
 
-  private def targetModule: TargetModule = cachedInUserData("targetModule", this, ProjectRootManager.getInstance(getProject)) {
+  private def targetModule: TargetModule = cachedInUserData(cacheId[this.type, "targetModule"], this, ProjectRootManager.getInstance(getProject)) {
     val moduleForFile = ModuleUtilCore.findModuleForPsiElement(this)
     moduleForFile match {
       case null =>

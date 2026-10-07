@@ -3,7 +3,7 @@ package org.jetbrains.scalaCli.script
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.psi.scope.PsiScopeProcessor
 import com.intellij.psi.{PsiElement, ResolveState}
-import org.jetbrains.plugins.scala.caches.cachedInUserData
+import org.jetbrains.plugins.scala.caches.{cacheId, cachedInUserData}
 import org.jetbrains.plugins.scala.lang.psi.api.{FileDeclarationsContributor, ScalaFile}
 import org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiElementFactory
 
@@ -34,7 +34,7 @@ final class ScalaCliScriptFileDeclarationsContributor extends FileDeclarationsCo
     state: ResolveState,
     lastParent: PsiElement
   ): Unit = {
-    val argsDef = cachedInUserData("scalaCliScriptInjectedSyntheticElements", holder, ProjectRootManager.getInstance(holder.getProject)) {
+    val argsDef = cachedInUserData(cacheId[this.type, "scalaCliScriptInjectedSyntheticElements"], holder, ProjectRootManager.getInstance(holder.getProject)) {
       ScalaPsiElementFactory.createDefinitionWithContext("def args: Array[String] = ???", holder, null)
     }
 

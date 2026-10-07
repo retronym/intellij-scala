@@ -4,7 +4,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.ModificationTracker
 import com.intellij.psi.PsiElement
-import org.jetbrains.plugins.scala.caches.cached
+import org.jetbrains.plugins.scala.caches.{cacheId, cached}
 import org.jetbrains.plugins.scala.codeInspection.collections.isSeq
 import org.jetbrains.plugins.scala.extensions.{PsiElementExt, SeqExt}
 import org.jetbrains.plugins.scala.lang.psi.api.base.literals.ScStringLiteral
@@ -66,11 +66,11 @@ object SbtScalacOptionUtils {
 
   def scalacOptionsByFlag: Map[String, Seq[SbtScalacOptionInfo]] = _scalacOptionsByFlag()
 
-  private val _scalacOptionsByFlag = cached("scalacOptionsByFlag", ModificationTracker.NEVER_CHANGED, () => {
+  private val _scalacOptionsByFlag = cached(cacheId[this.type, "scalacOptionsByFlag"], ModificationTracker.NEVER_CHANGED, () => {
     getScalacOptions.groupBy(_.flag)
   })
 
-  private val scalacOptionFlagsWithPrefix = cached("scalacOptionsFlagsWithPrefix", ModificationTracker.NEVER_CHANGED, () => {
+  private val scalacOptionFlagsWithPrefix = cached(cacheId[this.type, "scalacOptionsFlagsWithPrefix"], ModificationTracker.NEVER_CHANGED, () => {
     getScalacOptions.collect {
       case SbtScalacOptionInfo(flag, _, _, ArgType.OneAfterPrefix(prefix), _, _, _) =>
         prefix -> flag
@@ -79,7 +79,7 @@ object SbtScalacOptionUtils {
 
   def getScalacOptions: Seq[SbtScalacOptionInfo] = _getScalacOptions()
 
-  private val _getScalacOptions = cached("getScalacOptions", ModificationTracker.NEVER_CHANGED, () => {
+  private val _getScalacOptions = cached(cacheId[this.type, "getScalacOptions"], ModificationTracker.NEVER_CHANGED, () => {
     def scalacOptionsSource = {
       val completionContributorClass = SbtScalacOptionsCompletionContributor.getClass
       val inputStream = completionContributorClass.getResourceAsStream("scalac-options.json")
