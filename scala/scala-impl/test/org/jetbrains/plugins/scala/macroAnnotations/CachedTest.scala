@@ -70,7 +70,7 @@ class CachedTest extends CachedTestBase {
 
     Tracer.clearAll()
 
-    checkTracer(lambdaRegex("CachedTest$Foo$7$", "currentTime"), totalCount = 3, actualCount = 2) {
+    checkTracer("org$jetbrains$plugins$scala$macroAnnotations$CachedTest$testTracer$Foo$currentTime$currentTime$cacheKey", "Foo.currentTime", totalCount = 3, actualCount = 2) {
       Foo.currentTime()
       Foo.currentTime()
       Foo.dropCaches()

@@ -89,7 +89,7 @@ class CachedInUserDataTest extends CachedWithRecursionGuardTestBase {
       System.currentTimeMillis()
     }
 
-    checkTracer(lambdaRegex("CachedInUserDataTest", "testTracer.currentTime"), totalCount = 3, actualCount = 2) {
+    checkTracer("org$jetbrains$plugins$scala$macroAnnotations$CachedInUserDataTest$testTracer$currentTime$testTracer$currentTime$cacheKey", "CachedInUserDataTest.testTracer.currentTime", totalCount = 3, actualCount = 2) {
       currentTime()
       currentTime()
 
