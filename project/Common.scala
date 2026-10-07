@@ -181,6 +181,8 @@ object Common {
   val MainProjectSettings: Seq[Setting[?]] = Seq(
     sourcesInBase   := false,
     packageMethod := PackagingMethod.Standalone(),
+    // sbt-idea-plugin's own packageArtifact silently misses new or restored class files, see IncrementalPackaging.
+    packageArtifact := IncrementalPackaging.packageArtifactTask.value,
     libraryDependencies ++= Seq(
       Dependencies.scalaLibrary,
       Dependencies.scala3Library,
