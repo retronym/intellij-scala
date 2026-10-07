@@ -41,8 +41,13 @@ private case class ThisTypeSubstitution(target: ScType, @Nullable seenFromClass:
     case th: ScThisType =>
       TypeRecursionGuard.nestedSubstitution(th, s"$th with $this") {
         val res = doUpdateThisTypeFromClass(th, target, seenFromClass)
-        if ((res ne th) && embedsRewrittenThis(res, th)) th
-        else res
+        if ((res ne th) && embedsRewrittenThis(res, th)) {
+          SubstitutorInvariants.noReentry(this, th, res)
+          th
+        } else {
+          if (res == th) SubstitutorInvariants.noLeftover(this, th)
+          res
+        }
       }
   }
 
