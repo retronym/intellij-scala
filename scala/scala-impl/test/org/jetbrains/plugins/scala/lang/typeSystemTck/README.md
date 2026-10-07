@@ -9,7 +9,7 @@ upstream repo, where it is authored and the goldens are regenerated). Override t
 location with `-Dscala.tck.corpus=...` or the `SCALA_TCK_CORPUS` env var.
 
 It is the "system under test" counterpart to that repo's `ScalacEngine` (the
-oracle). See the corpus repo's `SPEC.md` for the type-system spec and `§4` for the
+oracle). See the corpus repo's `docs/TCK.md` for the harness contract and `§4` for the
 canonical rendering normal form that makes goldens comparable across engines.
 
 ## How it works
@@ -163,7 +163,7 @@ sbt "scala-impl/Test/compile"
 
 - Scaffold: conformance is a hard assertion; baseTypeSeq is a reported set diff.
 - TODO: order-preserving base-type comparison once an ordered API exists.
-- The renderer is `canonicalText` plus the SPEC §4 forms PSI's presentation doesn't
+- The renderer is `canonicalText` plus the `docs/TCK.md` §4 forms PSI's presentation doesn't
   produce: dealiased types, top-level existentials as `Q forSome { type _1 >: L <: U }`,
   and `X.this.p` compared equal to `X.p` (an object's own `this`). TODO: a refinement's
   `this.type`, existentials nested below the top level, and `FunctionN`/`TupleN`

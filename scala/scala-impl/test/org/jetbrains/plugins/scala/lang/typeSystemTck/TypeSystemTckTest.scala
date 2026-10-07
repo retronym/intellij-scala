@@ -81,7 +81,7 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
     )
     /**
      * Semantic divergences in member/expression types, pinned from TCK entries 29–37
-     * (SPEC-GAPS.md in the TCK repo).
+     * (`docs/SPEC-GAPS.md` in the TCK repo).
      *
      * G. Unstable prefix (30): scalac types `x.arr` for an unstable `x` existentially
      *    (`captureThis`); PSI substitutes the prefix's class type directly.
@@ -116,6 +116,10 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
     Assert.assertTrue("no corpus entries found", entries.nonEmpty)
 
     val report = new ArrayBuffer[String]()
+    // `-Dscala.tck.report=<file>` / env `SCALA_TCK_REPORT`: write every row's outcome as
+    // JSON and skip the assertions (for measuring a commit, e.g. across a history).
+    val reportPath = Option(System.getProperty("scala.tck.report")).orElse(sys.env.get("SCALA_TCK_REPORT")).filter(_.nonEmpty)
+    val rows = new ArrayBuffer[(String, String, Boolean)]()
     val conformanceFailures = new ArrayBuffer[String]()
     val equivalenceFailures = new ArrayBuffer[String]()
     val btsFailures = new ArrayBuffer[String]()
@@ -129,7 +133,7 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
     val ttDiffKeys = scala.collection.mutable.Set.empty[String]
     val bfDiffKeys = scala.collection.mutable.Set.empty[String]
 
-    entries.foreach { entry =>
+    entries.foreach { entry => try {
       report += s"\n## ${entry.id} — ${entry.description}"
       val (resolved, terms) = resolveTypes(entry)
 
@@ -142,6 +146,7 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
         report += f"  ${if (ok) "ok  " else "FAIL"} ${q.lhs} <:< ${q.rhs} = $holds (expected ${q.expect})"
         if (!ok)
           conformanceFailures += s"[${entry.id}] ${q.lhs} <:< ${q.rhs}: expected ${q.expect}, PSI says $holds"
+        rows += (("conformance", s"${entry.id}/${q.lhs} <:< ${q.rhs}", ok))
       }
 
       // --- equivalence (hard) — `=:=`, strictly more discriminating than `<:<` ---
@@ -153,6 +158,7 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
         report += f"  ${if (ok) "ok  " else "FAIL"} ${q.lhs} =:= ${q.rhs} = $holds (expected ${q.expect})"
         if (!ok)
           equivalenceFailures += s"[${entry.id}] ${q.lhs} =:= ${q.rhs}: expected ${q.expect}, PSI says $holds"
+        rows += (("equivalence", s"${entry.id}/${q.lhs} =:= ${q.rhs}", ok))
       }
 
       // --- base type sequence (set comparison vs golden) ---
@@ -168,6 +174,7 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
 
         val missing = properSupers -- actualKeys // scalac has it, PSI doesn't
         val extra = actualKeys -- properSupers    // PSI has it, scalac doesn't
+        rows += (("baseTypeSeq", s"${entry.id}/$name", missing.isEmpty && extra.isEmpty))
         if (missing.isEmpty && extra.isEmpty) {
           report += s"  ok   baseTypeSeq($name) {${actualKeys.size} proper supers}"
         } else {
@@ -181,7 +188,7 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
         }
       }
 
-      // --- baseClasses (linearization) — ORDER matters (SPEC §2) ---
+      // --- baseClasses (linearization) — ORDER matters (TCK.md §5) ---
       // Compare IntelliJ's MixinNodes.linearization against scalac's baseClasses
       // as ordered lists, dropping conventions that differ: scalac's `<refinement>`
       // head for compound types and the trailing `scala.Any`.
@@ -191,6 +198,7 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
         val golden = entry.goldenBaseClasses.getOrElse(name, Seq.empty)
           .map(bcName).filterNot(n => n == "scala.Any" || n == "<refinement>").toList
         if (golden.nonEmpty) {
+          rows += (("baseClasses", s"${entry.id}/$name", actual == golden))
           if (actual == golden) {
             report += s"  ok   baseClasses($name) [${actual.size}]"
           } else {
@@ -210,6 +218,7 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
         val golden = entry.goldenTermTypes.getOrElse(d.name, "")
         if (golden.nonEmpty) {
           val actual = terms.get(d.name).map(render).getOrElse("<unresolved>")
+          rows += (("termType", s"${entry.id}/${d.name}", normalizeKey(actual) == normalizeKey(golden)))
           if (normalizeKey(actual) == normalizeKey(golden)) {
             report += s"  ok   termType(${d.name}) = $actual"
           } else {
@@ -229,6 +238,7 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
           val pre = resolved(q.prefix)
           val actual = resolved(q.clazz).extractClass
             .flatMap(c => BaseTypes.baseType(pre, c)).map(render).getOrElse("<none>")
+          rows += (("baseType", s"${entry.id}/${q.name}", withKey(actual) == withKey(golden)))
           if (withKey(actual) == withKey(golden)) {
             report += s"  ok   baseType(${q.name}) = $actual"
           } else {
@@ -240,9 +250,24 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
           }
         }
       }
-    }
+    } catch {
+      case t: Throwable if reportPath.isDefined => rows += (("entry", s"${entry.id}/<error: ${t.getClass.getSimpleName}>", false))
+    } }
 
     println(report.mkString("\n"))
+
+    reportPath.foreach { path =>
+      def q(x: String) = "\"" + x.flatMap {
+        case '"'  => "\\\""
+        case '\\' => "\\\\"
+        case c if c < ' ' => " "
+        case c    => c.toString
+      } + "\""
+      val json = rows.map { case (dim, key, ok) => s"  {${q("dim")}: ${q(dim)}, ${q("key")}: ${q(key)}, ${q("ok")}: $ok}" }
+        .mkString("[\n", ",\n", "\n]\n")
+      java.nio.file.Files.writeString(java.nio.file.Paths.get(path), json)
+      return
+    }
     println(s"\n=== TCK: ${conformanceFailures.size} conformance failure(s), " +
       s"${equivalenceFailures.size} equivalence failure(s), " +
       s"${btsFailures.size} baseTypeSeq diff(s), ${bcFailures.size} baseClasses diff(s), " +
@@ -337,14 +362,14 @@ class TypeSystemTckTest extends ScalaLightCodeInsightFixtureTestCase {
       case Failure(msg) => throw new AssertionError(s"[$id] could not type '${ta.name}': $msg")
     }
 
-  // --- canonical rendering (SPEC §4), normalized to the TCK form ---
+  // --- canonical rendering (TCK.md §4), normalized to the TCK form ---
 
   private def render(tp: ScType): String =
     try normalize(specText(tp.removeAliasDefinitions()(using Context.Empty)))
     catch { case _: Throwable => tp.toString }
 
   /**
-   * SPEC §4 forms that IntelliJ's presentation doesn't produce. Type aliases are
+   * TCK.md §4 forms that IntelliJ's presentation doesn't produce. Type aliases are
    * dealiased by the caller. A top-level existential renders as
    * `Q forSome { type _1 >: L <: U; ... }`: quantifiers numbered in order of first
    * appearance in `Q`, bounds always written out. (IntelliJ would print `Box[_]` or

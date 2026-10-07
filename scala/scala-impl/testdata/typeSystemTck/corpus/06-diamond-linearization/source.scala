@@ -7,9 +7,8 @@
 //   - `baseTypeSeq` is ordered by a symbol-id total order consistent with
 //     subtyping, NOT the linearization, so D and D2 have the SAME baseTypeSeq
 //     order (D/D2, B, C, A, Object, Any).
-// The goldens below capture baseTypeSeq. Capturing the linearization-order
-// divergence (the real residual-ordering surface) needs a `baseClasses` query —
-// see PLAN.md / SPEC §2.
+// The goldens record both: `baseTypeSeq` and `baseClasses` (the linearization, the
+// real residual-ordering surface). See docs/SPEC-GAPS.md §3.
 trait A
 trait B extends A
 trait C extends A
