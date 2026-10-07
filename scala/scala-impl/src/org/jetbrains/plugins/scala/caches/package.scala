@@ -6,6 +6,8 @@ import org.jetbrains.plugins.scala.caches.CacheInUserData._
 import org.jetbrains.plugins.scala.caches.CacheWithRecursionGuard.{cacheWithRecursionGuard0, cacheWithRecursionGuardN}
 import org.jetbrains.plugins.scala.caches.stats.Tracer
 
+import java.util.concurrent.ConcurrentHashMap
+
 package object caches {
 
   // TODO Detect control flow exceptions
@@ -52,22 +54,31 @@ package object caches {
 
   // TODO Factory method instead of the ProjectUserDataHolder type class
 
-  def cachedInUserData[E: ProjectUserDataHolder, R](name: String, dataHolder: E, dependency: => AnyRef)(f: => R): R =
-    cacheInUserData0(idFor((() => f).getClass, name), nameFor((() => f).getClass, name), dataHolder, dependency, f)
+  def cachedInUserData[E: ProjectUserDataHolder, R](name: String, dataHolder: E, dependency: => AnyRef)(f: => R): R = {
+    val names = namesFor((() => f).getClass, name)
+    cacheInUserData0(names.id, names.name, dataHolder, dependency, f)
+  }
 
-  def cachedInUserData[E: ProjectUserDataHolder, T <: Product, R](name: String, dataHolder: E, dependency: => AnyRef, v: T)(f: => R): R =
-    cacheInUserDataN[E, T, R](idFor((() => f).getClass, name), nameFor((() => f).getClass, name), dataHolder, dependency, v, f)
+  def cachedInUserData[E: ProjectUserDataHolder, T <: Product, R](name: String, dataHolder: E, dependency: => AnyRef, v: T)(f: => R): R = {
+    val names = namesFor((() => f).getClass, name)
+    cacheInUserDataN[E, T, R](names.id, names.name, dataHolder, dependency, v, f)
+  }
 
   // TODO (defaultValue: => R) parameter list
 
-  def cachedWithRecursionGuard[R](name: String, element: PsiElement, defaultValue: => R, dependency: => AnyRef)(f: => R): R =
-    cacheWithRecursionGuard0(idFor((() => f).getClass, name), nameFor((() => f).getClass, name), element, defaultValue, dependency, f)
+  def cachedWithRecursionGuard[R](name: String, element: PsiElement, defaultValue: => R, dependency: => AnyRef)(f: => R): R = {
+    val names = namesFor((() => f).getClass, name)
+    cacheWithRecursionGuard0(names.id, names.name, element, defaultValue, dependency, f)
+  }
 
-  def cachedWithRecursionGuard[T <: Product, R](name: String, element: PsiElement, defaultValue: => R, dependency: => AnyRef, v: T)(f: => R): R =
-    cacheWithRecursionGuardN[T, R](idFor((() => f).getClass, name), nameFor((() => f).getClass, name), element, defaultValue, dependency, v, f)
+  def cachedWithRecursionGuard[T <: Product, R](name: String, element: PsiElement, defaultValue: => R, dependency: => AnyRef, v: T)(f: => R): R = {
+    val names = namesFor((() => f).getClass, name)
+    cacheWithRecursionGuardN[T, R](names.id, names.name, element, defaultValue, dependency, v, f)
+  }
 
   def measure[R](name: String)(f: => R): R = {
-    val tracer = Tracer(idFor((() => f).getClass, name), nameFor((() => f).getClass, name))
+    val names = namesFor((() => f).getClass, name)
+    val tracer = Tracer(names.id, names.name)
     tracer.invocation()
     tracer.calculationStart()
     try {
@@ -75,6 +86,20 @@ package object caches {
     } finally {
       tracer.calculationEnd()
     }
+  }
+
+  private final class CacheNames(val id: String, val name: String)
+
+  // `idFor` and `nameFor` build several strings; the by-name helpers above would otherwise call them on every invocation.
+  private val cacheNames: ClassValue[ConcurrentHashMap[String, CacheNames]] = new ClassValue[ConcurrentHashMap[String, CacheNames]] {
+    override def computeValue(lambdaClass: Class[?]): ConcurrentHashMap[String, CacheNames] = new ConcurrentHashMap()
+  }
+
+  private def namesFor(lambdaClass: Class[?], name: String): CacheNames = {
+    val byName = cacheNames.get(lambdaClass)
+    val names = byName.get(name) // fast path: avoid allocating the capturing lambda below
+    if (names ne null) names
+    else byName.computeIfAbsent(name, name => new CacheNames(idFor(lambdaClass, name), nameFor(lambdaClass, name)))
   }
 
   private def idFor(lambdaClass: Class[?], name: String): String =
