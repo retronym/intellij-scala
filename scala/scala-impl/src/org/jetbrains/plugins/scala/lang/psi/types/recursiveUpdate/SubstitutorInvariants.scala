@@ -9,8 +9,10 @@ import org.jetbrains.plugins.scala.lang.psi.types.api.designator.ScThisType
 import org.jetbrains.plugins.scala.lang.psi.types.{Context, ScType, ScTypeExt}
 import org.jetbrains.plugins.scala.util.ScEquivalenceUtil
 
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.{AtomicInteger, LongAdder}
 import scala.collection.mutable
+import scala.jdk.CollectionConverters._
 
 /**
  * Runtime checks of the structural constraints under which a chain of [[ThisTypeSubstitution]] links is one
@@ -32,6 +34,11 @@ import scala.collection.mutable
  * bounded set of sample messages; see [[report]]), the chain-walking ones to `off`. Override globally with
  * `-Dscala.types.substitutorInvariants=off|record|fail` or per rule with
  * `-Dscala.types.substitutorInvariants.A1=fail`; `fail` throws [[SubstitutorInvariantViolation]] at the site.
+ *
+ * Stacks. `-Dscala.types.substitutorInvariants.stacks=<depth>` additionally records, per rule, the unique call
+ * paths into each violation as a trie of frames (innermost first, plumbing and library frames dropped), so the
+ * report says how many distinct plugin lines mint or apply the offending links and which resolve routes reach
+ * them. See [[StackProfile]].
  */
 object SubstitutorInvariants {
 
@@ -139,6 +146,7 @@ object SubstitutorInvariants {
   def reset(): Unit = {
     counts.foreach(_.set(0))
     samples.foreach(s => s.synchronized(s.clear()))
+    StackProfile.reset()
   }
 
   /** Counts and sample messages per rule, for a harness to print after highlighting a corpus. */
@@ -147,8 +155,96 @@ object SubstitutorInvariants {
     for (rule <- Rule.all) {
       sb.append(f"  ${rule.id}%-3s ${mode(rule)}%-7s ${count(rule)}%8d  ${rule.statement}\n")
       samplesOf(rule).foreach(s => sb.append("        ").append(s).append('\n'))
+      if (StackProfile.depth > 0) StackProfile.render(rule, sb)
     }
     sb.result()
+  }
+
+  /**
+   * Unique call paths into each violation, as a trie keyed by stack frame, innermost first. Frames of this
+   * package (the substitutor engine and these checks) and of `scala.`/`java.` are dropped, so a first-level node
+   * is the plugin line that built or applied the link and its subtree is the set of routes that reach it.
+   * Recorded with [[StackWalker]] to a fixed depth, no `Throwable`; nodes are lock-free.
+   */
+  object StackProfile {
+    val depth: Int = Integer.getInteger(s"$PropertyPrefix.stacks", 0).intValue
+
+    /** How many first-level nodes (distinct minting/applying sites) to print per rule, and children per node. */
+    private val MaxChildren = 12
+
+    final case class Frame(className: String, method: String, line: Int) {
+      def render: String = {
+        val cls = className.stripPrefix("org.jetbrains.plugins.scala.")
+        s"$cls.$method:$line"
+      }
+    }
+
+    final class Node {
+      val count    = new LongAdder
+      val children = new ConcurrentHashMap[Frame, Node]
+    }
+
+    private val roots: Array[Node] = Array.fill(Rule.all.size)(new Node)
+
+    private val walker = StackWalker.getInstance()
+
+    private val OwnPackage = "org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate."
+
+    private val Extensions = "org.jetbrains.plugins.scala.extensions."
+
+    // Our own engine, the standard libraries, and the plugin's collection helpers (`smartMapWithIndex` etc.)
+    // are plumbing between the site and the violation.
+    private def isNoise(className: String): Boolean =
+      className.startsWith(OwnPackage) || className.startsWith(Extensions) ||
+        className.startsWith("scala.") || className.startsWith("java.")
+
+    private[SubstitutorInvariants] def record(rule: Rule): Unit = {
+      val frames: java.util.List[Frame] = walker.walk { stream =>
+        stream
+          .filter(f => !isNoise(f.getClassName))
+          .limit(depth.toLong)
+          .map[Frame](f => Frame(f.getClassName, f.getMethodName, f.getLineNumber))
+          .collect(java.util.stream.Collectors.toList[Frame])
+      }
+      var node = roots(rule.index)
+      node.count.increment()
+      frames.forEach { frame =>
+        node = node.children.computeIfAbsent(frame, _ => new Node)
+        node.count.increment()
+      }
+    }
+
+    def root(rule: Rule): Node = roots(rule.index)
+
+    /** First-level nodes: the distinct plugin lines a rule's violations were reached through. */
+    def sites(rule: Rule): Map[Frame, Long] =
+      roots(rule.index).children.asScala.map { case (f, n) => f -> n.count.sum }.toMap
+
+    /** Distinct full paths (leaves of the trie). */
+    def paths(rule: Rule): Int = {
+      def leaves(n: Node): Int = if (n.children.isEmpty) 1 else n.children.values.asScala.map(leaves).sum
+      val r = roots(rule.index)
+      if (r.children.isEmpty) 0 else leaves(r)
+    }
+
+    private[SubstitutorInvariants] def reset(): Unit = roots.indices.foreach(i => roots(i) = new Node)
+
+    private[SubstitutorInvariants] def render(rule: Rule, sb: StringBuilder): Unit = {
+      val r = roots(rule.index)
+      if (r.count.sum > 0) {
+        sb.append(s"        stacks: ${r.children.size} site(s), ${paths(rule)} distinct path(s), depth $depth\n")
+        def go(n: Node, indent: Int): Unit = {
+          val kids = n.children.asScala.toSeq.sortBy { case (_, c) => -c.count.sum }
+          kids.take(MaxChildren).foreach { case (frame, child) =>
+            sb.append("        ").append("  " * indent).append(f"${child.count.sum}%8d  ").append(frame.render).append('\n')
+            go(child, indent + 1)
+          }
+          if (kids.size > MaxChildren)
+            sb.append("        ").append("  " * indent).append(s"      …  ${kids.size - MaxChildren} more\n")
+        }
+        go(r, 0)
+      }
+    }
   }
 
   /** `-Dscala.types.substitutorInvariants.reportOnExit=true`: print [[report]] when the JVM exits, to collect the
@@ -162,6 +258,7 @@ object SubstitutorInvariants {
     case m =>
       reportOnExit
       counts(rule.index).incrementAndGet()
+      if (StackProfile.depth > 0) StackProfile.record(rule)
       val message = s"${rule.id} violated (${rule.statement}): $detail"
       val set = samples(rule.index)
       set.synchronized(if (set.size < MaxSamples) set += message)
