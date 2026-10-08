@@ -158,7 +158,7 @@ object BaseTypes {
   private val baseTypeGuard = RecursionManager.RecursionGuard[BaseTypeKey, Option[ScType]]("BaseTypes.baseType.guard")
 
   /** Inference variables aren't cached: they are per inference session, and `ScAbstractType`'s equality ignores its bounds. */
-  private def isCacheable(t: ScType): Boolean =
+  private[types] def isCacheable(t: ScType): Boolean =
     !t.subtypeExists {
       case _: UndefinedType | _: ScAbstractType => true
       case _                                    => false

@@ -213,6 +213,10 @@ object ScSubstitutor {
    * or refinement member) there is no owner chain to climb and the prefix contributes nothing, as in
    * scalac; the former anchorless walk, which narrowed by inheritance alone, is gone.
    */
+  /** Cleared with the conformance cache, by [[org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiManager]]. */
+  def clearCanonicalTargetCache(project: com.intellij.openapi.project.Project): Unit =
+    ThisTypeSubstitution.clearCache(project)
+
   def apply(updateThisType: ScType, @Nullable seenFromClass: PsiClass): ScSubstitutor =
     if (seenFromClass == null) ScSubstitutor.empty
     else {
