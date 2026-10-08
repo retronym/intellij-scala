@@ -1,9 +1,7 @@
 package org.jetbrains.plugins.scala.lang.psi.types.recursiveUpdate
 
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.project.Project
 import com.intellij.psi._
-import org.jetbrains.plugins.scala.caches.RecursionManager
+import org.jetbrains.plugins.scala.caches.{ModTracker, cached}
 import org.jetbrains.plugins.scala.extensions._
 import org.jetbrains.plugins.scala.lang.psi.ScalaPsiUtil._
 import org.jetbrains.plugins.scala.lang.psi.api.base.patterns._
@@ -12,7 +10,6 @@ import org.jetbrains.plugins.scala.lang.psi.api.toplevel._, typedef._
 import org.jetbrains.plugins.scala.lang.psi.types._, api._, designator._, nonvalue._
 import org.jetbrains.plugins.scala.util.ScEquivalenceUtil
 
-import java.util.concurrent.{ConcurrentHashMap, ConcurrentMap}
 import scala.annotation.tailrec
 
 /**
@@ -282,40 +279,28 @@ private object ThisTypeSubstitution {
    * (`analyzer.global.analyzer.global...`) until the no-self-embedding rule cuts them off.
    */
   def canonicalizeTarget(tp: ScType): ScType =
-    if (ScProjectionType.mayCollapse(tp)) canonicalizeTargetCached(tp) else tp
+    if (!ScProjectionType.mayCollapse(tp)) tp
+    else if (isPlainPath(tp)) canonicalizeCached(tp)
+    else canonicalize(tp)
 
   /**
    * Cached because canonicalizing a path re-canonicalizes its prefix through the uncached
    * `designatorSingletonType`, and a nested canonicalization starts with fresh fuel: without the
    * cache the cost grows exponentially in path depth. Context-free: `collapseSingletonPath`
-   * without `throughAliases` doesn't consult opaque aliases. A re-entrant query for the same type
-   * leaves it as is, as a trip of the depth guard would.
+   * without `throughAliases` doesn't consult opaque aliases. Only plain paths are cached, so no key
+   * holds an inference variable.
    */
-  private def canonicalizeTargetCached(tp: ScType): ScType = {
-    val cache = canonicalCache(tp.projectContext.project)
-    val hit   = cache.get(tp)
-    if (hit != null) hit
-    else
-      canonicalGuard.doPreventingRecursion(tp) {
-        val stackStamp = RecursionManager.markStack()
-        val result     = canonicalizeTargetUncached(tp)
-        if (stackStamp.mayCacheNow() && BaseTypes.isCacheable(tp)) cache.put(tp, result)
-        result
-      }.getOrElse(tp)
-  }
+  private val canonicalizeCached: ScType => ScType =
+    cached("canonicalizeTarget", ModTracker.anyScalaPsiChange, (tp: ScType) => canonicalize(tp))
 
-  private def canonicalizeTargetUncached(tp: ScType): ScType =
+  private def canonicalize(tp: ScType): ScType =
     TypeRecursionGuard.nestedSubstitution(tp, s"canonicalizing $tp")(ScProjectionType.collapseSingletonPath(tp, throughAliases = false))
 
-  private val canonicalGuard = RecursionManager.RecursionGuard[ScType, ScType]("ThisTypeSubstitution.canonicalizeTarget.guard")
-
-  private def canonicalCache(project: Project): ConcurrentMap[ScType, ScType] =
-    project.getService(classOf[CanonicalTargetCacheService]).cache
-
-  def clearCache(project: Project): Unit = canonicalCache(project).clear()
-
-  @Service(Array(Service.Level.PROJECT))
-  private final class CanonicalTargetCacheService {
-    val cache: ConcurrentMap[ScType, ScType] = new ConcurrentHashMap()
+  /** A path rooted in a this-type or a designator: `C.this.a.b`, `o.a.b`, `a.b`. */
+  @tailrec
+  private def isPlainPath(tp: ScType): Boolean = tp match {
+    case proj: ScProjectionType              => isPlainPath(proj.projected)
+    case _: ScThisType | _: ScDesignatorType => true
+    case _                                   => false
   }
 }
