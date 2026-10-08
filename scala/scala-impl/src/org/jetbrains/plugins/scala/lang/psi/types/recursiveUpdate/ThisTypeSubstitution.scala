@@ -281,10 +281,8 @@ private object ThisTypeSubstitution {
    * spellings back in as substitution targets and the paths compound
    * (`analyzer.global.analyzer.global...`) until the no-self-embedding rule cuts them off.
    */
-  def canonicalizeTarget(tp: ScType): ScType = tp match {
-    case _: ScProjectionType | _: ScDesignatorType if BaseTypes.isCacheable(tp) => canonicalizeTargetCached(tp)
-    case _                                                                     => canonicalizeTargetUncached(tp)
-  }
+  def canonicalizeTarget(tp: ScType): ScType =
+    if (ScProjectionType.mayCollapse(tp)) canonicalizeTargetCached(tp) else tp
 
   /**
    * Cached because canonicalizing a path re-canonicalizes its prefix through the uncached
@@ -301,7 +299,7 @@ private object ThisTypeSubstitution {
       canonicalGuard.doPreventingRecursion(tp) {
         val stackStamp = RecursionManager.markStack()
         val result     = canonicalizeTargetUncached(tp)
-        if (stackStamp.mayCacheNow()) cache.put(tp, result)
+        if (stackStamp.mayCacheNow() && BaseTypes.isCacheable(tp)) cache.put(tp, result)
         result
       }.getOrElse(tp)
   }

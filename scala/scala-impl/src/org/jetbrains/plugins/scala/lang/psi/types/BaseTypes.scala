@@ -129,23 +129,21 @@ object BaseTypes {
    * different arguments, the contributions are merged ([[mergeSameClass]]), so the
    * result is deterministic, unlike `iterator(t).find(_.extractClass.contains(clazz))`.
    */
-  def baseType(t: ScType, clazz: PsiClass)(implicit context: Context): Option[ScType] =
-    if (!isCacheable(t)) baseTypeUncached(t, clazz)
-    else {
-      val key             = BaseTypeKey(t, clazz)
-      val cache           = baseTypeCache(t.projectContext.project)
-      val resultInContext = Option(cache.get(key)).getOrElse(new ContextDependent[Option[ScType]]())
-      resultInContext.get.getOrElse {
-        // A re-entrant query for the same key is a cyclic base-type graph: no base type, as
-        // conformance answers `Left`. The guard also keeps the enclosing results out of caches.
-        baseTypeGuard.doPreventingRecursion(key) {
-          val stackStamp              = RecursionManager.markStack()
-          val (value, valueInContext) = resultInContext.updatedUsing(ctx => baseTypeUncached(t, clazz)(using ctx))
-          if (stackStamp.mayCacheNow()) cache.put(key, valueInContext)
-          value
-        }.flatten
-      }
+  def baseType(t: ScType, clazz: PsiClass)(implicit context: Context): Option[ScType] = {
+    val key             = BaseTypeKey(t, clazz)
+    val cache           = baseTypeCache(t.projectContext.project)
+    val resultInContext = Option(cache.get(key)).getOrElse(new ContextDependent[Option[ScType]]())
+    resultInContext.get.getOrElse {
+      // A re-entrant query for the same key is a cyclic base-type graph: no base type, as
+      // conformance answers `Left`. The guard also keeps the enclosing results out of caches.
+      baseTypeGuard.doPreventingRecursion(key) {
+        val stackStamp              = RecursionManager.markStack()
+        val (value, valueInContext) = resultInContext.updatedUsing(ctx => baseTypeUncached(t, clazz)(using ctx))
+        if (stackStamp.mayCacheNow() && isCacheable(t)) cache.put(key, valueInContext)
+        value
+      }.flatten
     }
+  }
 
   private def baseTypeUncached(t: ScType, clazz: PsiClass)(implicit context: Context): Option[ScType] = {
     val sameClass = (Iterator(t) ++ iterator(t)).filter(_.extractClass.contains(clazz)).toList
@@ -157,7 +155,7 @@ object BaseTypes {
 
   private val baseTypeGuard = RecursionManager.RecursionGuard[BaseTypeKey, Option[ScType]]("BaseTypes.baseType.guard")
 
-  /** Inference variables aren't cached: they are per inference session, and `ScAbstractType`'s equality ignores its bounds. */
+  /** Inference variables aren't cached (checked on a miss only: no cached key contains one): they are per inference session, and `ScAbstractType`'s equality ignores its bounds. */
   private[types] def isCacheable(t: ScType): Boolean =
     !t.subtypeExists {
       case _: UndefinedType | _: ScAbstractType => true
