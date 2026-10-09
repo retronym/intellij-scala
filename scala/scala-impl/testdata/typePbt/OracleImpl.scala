@@ -16,6 +16,7 @@ import scala.tools.nsc.{Global, Settings}
  *  - `C <a> <b>`: `a <:< b`, answer `true` / `false`
  *  - `E <a> <b>`: `a =:= b`
  *  - `B <a> <c>`: `a.baseType(c.typeSymbol)`, answer `none` or `some <type>`
+ *  - `S <a> <c>`: `a <:< a.baseType(c.typeSymbol)`, or `none`
  *
  * The result starts with `OK`, or `ERR` followed by the compiler errors. Fields
  * are tab-separated. A query that throws answers `exc <message>`.
@@ -68,6 +69,10 @@ class OracleImpl(classpath: String) extends java.util.function.BiFunction[String
         case Array("B", a, c) =>
           val bt = tpe(a).baseType(tpe(c).typeSymbol)
           if (bt == NoType) "none" else "some\t" + bt
+        case Array("S", a, c) =>
+          val t = tpe(a)
+          val bt = t.baseType(tpe(c).typeSymbol)
+          if (bt == NoType) "none" else (t <:< bt).toString
         case other => "exc\tbad query " + other.mkString(" ")
       } catch { case t: Throwable => "exc\t" + String.valueOf(t).replace('\n', ' ') }
     }

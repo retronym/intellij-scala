@@ -41,9 +41,13 @@ class TypePbtTest extends ScalaLightCodeInsightFixtureTestCase {
   private def runCase(c: Case): Either[Seq[String], Answers] = {
     programCounter += 1
     val source = Ast.show(c.program, s"__pbt$programCounter")
-    oracle.ask(source, c.questions.map(_.encode)) match {
+    // for each baseType question, also whether scalac has T <:< baseType(T, C)
+    val superQueries = c.questions.collect { case q: Question.BaseType => s"S\t${q.a}\t${q.cls}" }
+    oracle.ask(source, c.questions.map(_.encode) ++ superQueries) match {
       case Left(errors) => Left(errors)
-      case Right(scalacAnswers) =>
+      case Right(allAnswers) =>
+        val (scalacAnswers, superAnswers) = allAnswers.splitAt(c.questions.size)
+        val scalacSuper = c.questions.collect { case q: Question.BaseType => q }.zip(superAnswers).toMap
         val (pluginAnswers, extra) = askPlugin(source, c.questions)
         val findings = ArrayBuffer.empty[Finding]
         c.questions.zip(scalacAnswers).zip(pluginAnswers).foreach { case ((q, s), p) =>
@@ -59,7 +63,8 @@ class TypePbtTest extends ScalaLightCodeInsightFixtureTestCase {
             }
           }
         }
-        findings ++= extra.map(_.copy(program = c.program))
+        // the plugin-only property counts where scalac has it for its own base type
+        findings ++= extra.filter(f => scalacSuper.get(f.question.asInstanceOf[Question.BaseType]).contains("true")).map(_.copy(program = c.program))
         Right(Answers(scalacAnswers, pluginAnswers, findings.toSeq))
     }
   }
@@ -109,25 +114,36 @@ class TypePbtTest extends ScalaLightCodeInsightFixtureTestCase {
   }
 
   /** Shrinks `f` while scalac accepts the program and the same disagreement reproduces. */
+  private val shrinkStats = mutable.Map.empty[Finding, (Int, Int)]
+
   private def shrink(f: Finding, budget: Int): Finding = {
     def same(g: Finding): Boolean = g.check == f.check && g.question == f.question && g.direction == f.direction
     var current = f.program
     var steps = 0
+    var accepted = 0
     var progress = true
     val keep = f.question.ids.toSet
     // only the question at hand
     current = dropOtherQueries(current, keep)
     if (reproduces(current, f.question).forall(!same(_))) current = f.program
-    while (progress && steps < budget) {
+    // Candidates before the last accepted one were rejected and mostly stay rejected, so
+    // resume from there; a pass that finds nothing is repeated once from the start.
+    var resumeAt = 0
+    while ((progress || resumeAt > 0) && steps < budget) {
+      if (!progress) resumeAt = 0
       progress = false
-      val it = Shrink.program(current, keep).iterator
+      val it = Shrink.program(current, keep).iterator.zipWithIndex.drop(resumeAt)
       while (!progress && it.hasNext && steps < budget) {
-        val candidate = it.next()
-        steps += 1
-        if (reproduces(candidate, f.question).exists(same)) { current = candidate; progress = true }
+        val (candidate, i) = it.next()
+        if (candidate != current) steps += 1
+        if (candidate != current && reproduces(candidate, f.question).exists(same)) {
+          current = candidate; progress = true; accepted += 1; resumeAt = math.max(0, i - 1)
+        }
       }
     }
-    reproduces(current, f.question).find(same).getOrElse(f.copy(program = current))
+    val result = reproduces(current, f.question).find(same).getOrElse(f.copy(program = current))
+    shrinkStats(result) = (steps, accepted)
+    result
   }
 
   private def reproduces(p: Program, q: Question): Seq[Finding] =
@@ -142,10 +158,38 @@ class TypePbtTest extends ScalaLightCodeInsightFixtureTestCase {
     Program(ms(p.members))
   }
 
+  /**
+   * Replays a hand-written program: `SCALA_PBT_REPLAY=<file>`, a Scala file defining
+   * `type __q_<id>` aliases (in any package), with questions in `// ? C a b`, `// ? E a b`,
+   * `// ? B a c` lines. Prints both engines' answers.
+   */
+  def testReplay(): Unit = Option(prop("replay", null)).foreach { path =>
+    val source = Files.readString(Paths.get(path))
+    val questions = source.linesIterator.map(_.trim).collect {
+      case l if l.startsWith("// ? ") => l.stripPrefix("// ? ").trim.split("\\s+").toList
+    }.map {
+      case List("C", a, b) => Question.Conforms(a, b)
+      case List("E", a, b) => Question.Equiv(a, b)
+      case List("B", a, c) => Question.BaseType(a, c)
+      case other           => throw new IllegalArgumentException(s"bad question: $other")
+    }.toList
+    val out = oracle.ask(source, questions.map(_.encode)) match {
+      case Left(errors) => ("scalac rejects the program:" +: errors).mkString("\n")
+      case Right(scalac) =>
+        val (plugin, extra) = askPlugin(source, questions)
+        (questions.lazyZip(scalac).lazyZip(plugin).map { (q, s, p) =>
+          val mark = if (s.takeWhile(_ != '\t') == p.takeWhile(_ != '\t')) "  " else "≠ "
+          s"$mark${q.show}: scalac=${s.replace('\t', ' ')} plugin=${p.replace('\t', ' ')}"
+        } ++ extra.map(f => s"≠ ${f.check} ${f.question.show}: ${f.plugin.replace('\t', ' ')}")).mkString("\n")
+    }
+    println("=== REPLAY " + path + "\n" + out)
+    Option(prop("report", null)).foreach(r => Files.writeString(Paths.get(r), out))
+  }
+
   def testDifferential(): Unit = {
     val seed = prop("seed", "1").toLong
     val count = prop("count", "30").toInt
-    val shrinkBudget = prop("shrinkBudget", "400").toInt
+    val shrinkBudget = prop("shrinkBudget", "600").toInt
     val report = ArrayBuffer.empty[String]
     var discarded = 0
     var asked = 0
@@ -153,6 +197,7 @@ class TypePbtTest extends ScalaLightCodeInsightFixtureTestCase {
     val discardSamples = mutable.LinkedHashMap.empty[String, (Seq[String], Program)]
     val answerStats = mutable.Map.empty[String, Int].withDefaultValue(0)
     val raw = ArrayBuffer.empty[(Long, Finding)]
+    val featureCoverage = mutable.Map.empty[String, Int].withDefaultValue(0)
 
     for (i <- 0 until count) {
       val programSeed = seed * 1000003L + i
@@ -165,6 +210,7 @@ class TypePbtTest extends ScalaLightCodeInsightFixtureTestCase {
           if (!discardSamples.contains(reason)) discardSamples(reason) = (errors, c.program)
         case Right(a) =>
           asked += c.questions.size
+          Classify.features(c.program).foreach(featureCoverage(_) += 1)
           c.questions.zip(a.scalac).foreach { case (q, s) => answerStats(q.getClass.getSimpleName + ":" + s.takeWhile(_ != '\t')) += 1 }
           a.findings.foreach(f => raw += programSeed -> f)
       }
@@ -178,6 +224,7 @@ class TypePbtTest extends ScalaLightCodeInsightFixtureTestCase {
     report += s"programs: ${count - discarded} typed by scalac, $discarded discarded; questions asked: $asked"
     report += s"scalac answers: ${answerStats.toSeq.sorted.map { case (k, v) => s"$k=$v" }.mkString(", ")}"
     report += s"discard reasons: ${discardReasons.toSeq.sortBy(-_._2).take(12).map { case (k, v) => s"$v× $k" }.mkString("; ")}"
+    report += s"programs with feature: ${featureCoverage.toSeq.sortBy(-_._2).map { case (k, v) => s"$k=$v" }.mkString(", ")}"
     report += s"findings: ${raw.size} raw, ${shrunk.size} shrunk, ${bySignature.size} signatures"
     val byIssue = shrunk.groupBy(x => Classify.classify(x._2).fold("UNKNOWN")(_.id)).view.mapValues(_.size).toSeq.sortBy(-_._2)
     report += s"classified: ${byIssue.map { case (k, v) => s"$k=$v" }.mkString(", ")}"
@@ -187,6 +234,7 @@ class TypePbtTest extends ScalaLightCodeInsightFixtureTestCase {
       if (issue.isEmpty) unknown += fs.size
       report += ""
       report += s"## ${issue.fold("UNKNOWN")(i => s"known: ${i.id}")} — $sig (${fs.size}×)"
+      report += s"shrink steps/accepted: ${shrinkStats.get(f).fold("?")(x => s"${x._1}/${x._2}")}"
       report += s"seed $s: ${f.question.show}: scalac=${f.scalac.replace('\t', ' ')} plugin=${f.plugin.replace('\t', ' ')}"
       report += "```scala"
       report += Ast.show(f.program, "p")

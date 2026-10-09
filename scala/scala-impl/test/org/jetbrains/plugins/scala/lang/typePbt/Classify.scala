@@ -92,6 +92,33 @@ object Classify {
     case _               => None
   }
 
+  /** Names of member types (type members, inner classes): a bare reference to one means `this.M`. */
+  private def memberTypeNames(p: Program): Set[String] = {
+    def go(ms: List[Member], nested: Boolean): List[String] = ms.flatMap {
+      case TypeMem(n, _, _) => List(n)
+      case ClassMem(c)      => (if (nested) List(c.name) else Nil) ++ go(c.members, nested = true)
+      case _                => Nil
+    }
+    go(p.members, nested = false).toSet
+  }
+
+  /** Whether `t` mentions `this`, explicitly or through a bare member type name in `members`. */
+  private def mentionsThis(t: Tp, members: Set[String]): Boolean = {
+    def path(p: Path): Boolean = p match {
+      case PThis(_)   => true
+      case PSel(q, _) => path(q)
+      case PId(_)     => false
+    }
+    t match {
+      case TRef(None, n, args) => members(n) || args.exists(mentionsThis(_, members))
+      case TRef(pre, _, args)  => pre.exists(path) || args.exists(mentionsThis(_, members))
+      case TProj(q, _)         => mentionsThis(q, members)
+      case TSingle(p)          => path(p)
+      case TWith(ps, refs)     => ps.exists(mentionsThis(_, members)) || refs.exists(r => mentionsThis(r._2, members))
+      case TBuiltin(_)         => false
+    }
+  }
+
   private def lhs(f: Finding): Option[Tp] = queryType(f.program, f.question.ids.head)
   private def rhs(f: Finding): Option[Tp] = queryType(f.program, f.question.ids(1))
 
@@ -123,11 +150,46 @@ object Classify {
       "abstract-type-vs-mixed-in-alias",
       "A type member declared abstract in one trait and as an alias in another, unrelated trait (mixed in, or the self " +
         "type): in the composition the alias wins in scalac, but the plugin keeps the abstract member (k.M <: T#M " +
-        "holds in the plugin, while scalac dealiases k.M). Cause not located yet.",
+        "holds in the plugin, while scalac dealiases k.M). The plugin does know K#M =:= Any, yet also says " +
+        "K#M <: T1#M, where T1#M is the unrelated abstract M. Cause not located yet.",
       f => Set("conforms", "equiv")(f.check) && f.direction == "unsound" && {
         val both = abstractTypes(f.program) intersect aliasTypes(f.program)
         (lhs(f).toList ++ rhs(f).toList).flatMap(designated).exists(both)
       }
+    ),
+    KnownIssue(
+      "unstable-prefix-this",
+      "TCK group G (30-asf-unstable-prefix): a member whose type or alias mentions `this`, seen from an unstable prefix " +
+        "(a projection T#M, or a path through a val typed T#I). scalac abstracts `this` existentially; the plugin " +
+        "substitutes the class type or keeps a concrete path. Both directions: K1#M1 <: k1.M1 for `type M1 = Con[this.type]` " +
+        "(unsound), k1.v.w.type <: T#M for `type M = this.v.w.type` (incomplete), v13.v7.I2 =:= k0.I2 for " +
+        "`val v9: T0#I1; val v13: k0.v9.v7.I1` with `v7: T0.this.type` (unsound), and a self-type member: " +
+        "`trait S0 { self: S3 => trait J1 { val w: J5 } }`, `val u: S0#J1` in S2, then s0.u.w.type <: S1#J5 (unsound).",
+      f => Set("conforms", "equiv")(f.check) && {
+        val members = memberTypeNames(f.program)
+        val thisAliases = declarations(f.program).collect { case (_, TypeMem(m, Some(a), _)) if mentionsThis(a, members) => m }.toSet
+        val projectsThisAlias = (lhs(f).toList ++ rhs(f).toList).exists {
+          case TProj(_, m) => thisAliases(m)
+          case _           => false
+        }
+        // a val typed by a projection, whose members' `this` is then seen from an unstable prefix
+        val projectionTypedVal = declarations(f.program).exists {
+          case (_, ValMem(_, TProj(_, _))) => true
+          case _                           => false
+        }
+        projectsThisAlias || (projectionTypedVal && declarations(f.program).exists {
+          case (_, ValMem(_, t)) => mentionsThis(t, members)
+          case _                 => false
+        })
+      }
+    ),
+    KnownIssue(
+      "a1-refined-compound-with-singleton",
+      "SubstitutorInvariants A1 throws (Fail in tests) for a this-link minted in MixinNodes.SuperTypesData for a refined " +
+        "compound with a singleton part, e.g. `(T0 with this.type) with this.I5 { type M3 = Any }` in a subtrait of the " +
+        "declarer of I5/M3, or `(T0 with a15.I6 { type M3 = Any }) with v14.I6` with `v14: k0.type; a15: v14.type`. " +
+        "Not yet analysed whether the link is wrong or A1 is too strict.",
+      f => f.check == "pluginException" && f.plugin.contains("A1 violated") && f.features("refinement") && f.features("singleton")
     ),
   )
 
