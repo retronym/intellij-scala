@@ -176,10 +176,13 @@ object Classify {
     ),
     KnownIssue(
       "null-conforms-nothing-member",
-      "Null <: M holds in the plugin for a type member M that is, or is bounded by, Nothing (`type M = Nothing`, " +
-        "`type M <: Nothing`), also with Null itself reached through an alias; scalac says no.",
-      f => f.check == "conforms" && f.direction == "unsound" &&
-        lhs(f).exists(isNull(f.program, _)) && rhs(f).flatMap(designated).exists(nothingMembers(f.program))
+      "Null <: T holds in the plugin where T is Nothing in disguise: a type member that is, or is bounded by, Nothing " +
+        "(`type M = Nothing`, `type M <: Nothing`), or a compound with a Nothing part (`Nothing with Any`); also with " +
+        "Null itself reached through an alias. scalac says no.",
+      f => f.check == "conforms" && f.direction == "unsound" && lhs(f).exists(isNull(f.program, _)) && rhs(f).exists {
+        case TWith(ps, _) => ps.contains(TBuiltin("Nothing"))
+        case t            => designated(t).exists(nothingMembers(f.program))
+      }
     ),
     KnownIssue(
       "same-named-type-members",
@@ -188,7 +191,9 @@ object Classify {
         "`K extends T1 with T2`: the plugin has K#M =:= Any but also K#M <: T1#M and k.M <: T1#M. Inside " +
         "`trait T2 { self: T1 => type M4 = Nothing }` with `T1 { type M4 = Any }`, scalac's this.M4 is T1's (Any), the " +
         "plugin's T2's. `(Any { type M4 = k1.M4 }) with K1 <: Any { type M4 = k1.M4 }` holds in the plugin; in scalac " +
-        "K1's M4 (seen from the compound's this) wins. Incomplete too: `trait T2 extends T1 { self: T3 => type M5 = this.M1 }` " +
+        "K1's M4 (seen from the compound's this) wins. The mixin case (K#M <: T1#M) comes from the name-only arm of " +
+        "ScalaConformance's projection visitor (`proj1.actualElement.name == proj.actualElement.name`, then prefixes " +
+        "conform): without it, this issue's raw findings drop from 42 to 9 on seed 3 and nothing new appears. Incomplete too: `trait T2 extends T1 { self: T3 => type M5 = this.M1 }` " +
         "with M1 abstract in T0 and `= Nothing` in T3: scalac has v19.M5 <: Nothing for `v19: T2`, the plugin doesn't. " +
         "Cause not located yet.",
       f => Set("conforms", "equiv")(f.check) && {
