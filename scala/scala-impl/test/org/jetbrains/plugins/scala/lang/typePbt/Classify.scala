@@ -205,16 +205,19 @@ object Classify {
       f => Set("conforms", "equiv")(f.check) && {
         val members = memberTypeNames(f.program)
         val thisAliases = declarations(f.program).collect { case (_, TypeMem(m, Some(a), _)) if mentionsThis(a, members) => m }.toSet
-        val projectsThisAlias = (lhs(f).toList ++ rhs(f).toList).exists {
-          case TProj(_, m) => thisAliases(m)
-          case _           => false
+        // anywhere in either side: `Con[K0#M1]` for `type M1 = Con[this.M2]` too
+        def projectsThisAlias(t: Tp): Boolean = t match {
+          case TProj(q, m)      => thisAliases(m) || projectsThisAlias(q)
+          case TRef(_, _, args) => args.exists(projectsThisAlias)
+          case TWith(ps, refs)  => ps.exists(projectsThisAlias) || refs.exists(r => projectsThisAlias(r._2))
+          case _                => false
         }
         // a val typed by a projection, whose members' `this` is then seen from an unstable prefix
         val projectionTypedVal = declarations(f.program).exists {
           case (_, ValMem(_, TProj(_, _))) => true
           case _                           => false
         }
-        projectsThisAlias || (projectionTypedVal && declarations(f.program).exists {
+        (lhs(f).toList ++ rhs(f).toList).exists(projectsThisAlias) || (projectionTypedVal && declarations(f.program).exists {
           case (_, ValMem(_, t)) => mentionsThis(t, members)
           case _                 => false
         })
