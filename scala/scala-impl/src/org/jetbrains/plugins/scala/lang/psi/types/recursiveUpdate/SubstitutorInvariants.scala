@@ -204,6 +204,7 @@ object SubstitutorInvariants {
     selfRootedSamples.synchronized(selfRootedSamples.clear())
     samples.foreach(s => s.synchronized(s.clear()))
     StackProfile.reset()
+    InheritorCensus.reset()
   }
 
   /** Counts and sample messages per rule, for a harness to print after highlighting a corpus. */
@@ -218,6 +219,7 @@ object SubstitutorInvariants {
       samplesOf(rule).foreach(s => sb.append("        ").append(s).append('\n'))
       if (StackProfile.depth > 0) StackProfile.render(rule, sb)
     }
+    InheritorCensus.report(sb)
     sb.result()
   }
 
@@ -392,10 +394,11 @@ object SubstitutorInvariants {
    * (`JavaClearable.scala`).
    */
   private[recursiveUpdate] def fixedTarget(link: ThisTypeSubstitution): Unit =
-    if (enabled(Rule.FixedTarget) && !checking.get) {
+    if ((InheritorCensus.enabled || enabled(Rule.FixedTarget)) && !checking.get) {
       val leaves = thisLeaves(link.target)
-      if (leaves.exists(th => ownerChainContains(link.seenFromClass, th.element)))
+      if (enabled(Rule.FixedTarget) && leaves.exists(th => ownerChainContains(link.seenFromClass, th.element)))
         link.a1MintSite = StackProfile.mintSite()
+      if (InheritorCensus.enabled) InheritorCensus.atMint(link, leaves)
     }
 
   /** A1, the first time the walk applies `link`: classify it as fixed or self-rooted, else report it. A
@@ -431,6 +434,138 @@ object SubstitutorInvariants {
         }
       }
     }
+
+  /**
+   * EXPERIMENT. A census of the links that A1's pre-filter skips although the plugin's walk can rewrite their
+   * targets: the target has a this-leaf of a class that inherits from the anchor or one of its enclosing classes
+   * but is not on that owner chain. scalac's walk leaves such a leaf alone (`asf_eq_of_fixed`); the superclass
+   * early exit in `ThisTypeSubstitution.doUpdateThisTypeFromClass` may not. Counted at the link's first use
+   * (like A1, to not evaluate types out of turn): how many such links, and how many map their own target to
+   * something else. `-Dscala.types.substitutorInvariants.inheritorCensus=true`; record only.
+   */
+  object InheritorCensus {
+    val enabled: Boolean = java.lang.Boolean.getBoolean(s"$PropertyPrefix.inheritorCensus")
+
+    private val candidates   = new AtomicInteger
+    private val alsoA1       = new AtomicInteger
+    private val moved        = new AtomicInteger
+    private val movedSelfTyped = new AtomicInteger
+    private val movedSamples = mutable.LinkedHashMap.empty[String, AtomicInteger]
+    private val MaxShapes    = 200
+
+    /** Classes on `anchor`'s owner chain that `cls` strictly inherits from. */
+    private def inheritedOwners(anchor: PsiClass, cls: PsiClass): Seq[PsiClass] = {
+      val buf = mutable.ArrayBuffer.empty[PsiClass]
+      var c = anchor
+      while (c != null) {
+        if (!sameClass(c, cls) && ScalaPsiUtil.isInheritorDeep(cls, c)) buf += c
+        c = c.containingClass
+      }
+      buf.toSeq
+    }
+
+    private def isCensusLeaf(anchor: PsiClass, th: ScThisType): Boolean =
+      !ownerChainContains(anchor, th.element) && inheritedOwners(anchor, th.element).nonEmpty
+
+    private[SubstitutorInvariants] def atMint(link: ThisTypeSubstitution, leaves: Seq[ScThisType]): Unit =
+      if (link.seenFromClass != null && leaves.exists(isCensusLeaf(link.seenFromClass, _)))
+        link.censusMintSite = StackProfile.mintSite()
+
+    /** Some class on the anchor's owner chain has a self type naming (an inheritor of) the leaf's class: the cake
+     *  spelling, where the plugin writes `SymbolTable.this` for scalac's `Definitions.this`. */
+    private def selfTypedLeaf(anchor: PsiClass, th: ScThisType): Boolean = {
+      var c = anchor
+      while (c != null) {
+        c match {
+          case td: org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScTemplateDefinition =>
+            val hit = td.selfType.exists { st =>
+              val parts = st match {
+                case ct: org.jetbrains.plugins.scala.lang.psi.types.ScCompoundType => ct.components
+                case t => Seq(t)
+              }
+              parts.exists(_.extractClass(using Context(anchor)).exists(sc => sameClass(sc, th.element) || ScalaPsiUtil.isInheritorDeep(sc, th.element)))
+            }
+            if (hit) return true
+          case _ =>
+        }
+        c = c.containingClass
+      }
+      false
+    }
+
+    private[recursiveUpdate] def onFirstUse(link: ThisTypeSubstitution): Unit = {
+      val site = link.censusMintSite
+      link.censusMintSite = null
+      if (site != null && !checking.get) withoutNestedChecks {
+        candidates.incrementAndGet()
+        if (link.a1MintSite != null) alsoA1.incrementAndGet()
+        implicit val context: Context = Context(link.seenFromClass)
+        val res = ScSubstitutor(link)(link.target)
+        val same = res == link.target || res.equiv(link.target) || ThisTypeSubstitution.sameUpToAliases(res, link.target)
+        if (!same) {
+          moved.incrementAndGet()
+          val anchor = link.seenFromClass
+          val leaves = thisLeaves(link.target).filter(isCensusLeaf(anchor, _))
+          val selfTyped = leaves.exists(selfTypedLeaf(anchor, _))
+          if (selfTyped) movedSelfTyped.incrementAndGet()
+          val leafDesc = leaves.map(th => s"${th.element.name} <: ${inheritedOwners(anchor, th.element).map(_.name).mkString("/")}").distinct.mkString(", ")
+          val key = s"${if (selfTyped) "SELF-TYPED " else ""}[$link] -> $res; leaves $leafDesc; A1-marked=${link.a1MintSite != null} (minted at $site)"
+          movedSamples.synchronized {
+            movedSamples.get(key) match {
+              case Some(n) => n.incrementAndGet()
+              case None if movedSamples.size < MaxShapes => movedSamples(key) = new AtomicInteger(1)
+              case None =>
+            }
+          }
+        }
+      }
+    }
+
+    private val earlyExits        = new AtomicInteger
+    private val earlyExitsOffChain = new AtomicInteger
+    private val earlyExitsSelfTyped = new AtomicInteger
+    private val earlyExitSamples  = mutable.LinkedHashMap.empty[String, AtomicInteger]
+
+    /** The superclass early exit of `doUpdateThisTypeFromClass` rewrote `th` (a this-type of a strict inheritor
+     *  of the cursor `clazz`) to `res`. Off the anchor's owner chain scalac 2.13 leaves `th` alone
+     *  (`matchesPrefixAndClass` is `clazz == candidate`), unless the plugin spells a self-typed `A.this` as the
+     *  self type's class, which is the self-typed count. */
+    private[recursiveUpdate] def earlyExit(link: ThisTypeSubstitution, th: ScThisType, clazz: PsiClass, at: ScType, res: ScType): Unit =
+      if (!checking.get && (res ne th) && res != th) {
+        earlyExits.incrementAndGet()
+        val anchor = link.seenFromClass
+        if (!ownerChainContains(anchor, th.element)) {
+          earlyExitsOffChain.incrementAndGet()
+          val selfTyped = withoutNestedChecks(selfTypedLeaf(anchor, th))
+          if (selfTyped) earlyExitsSelfTyped.incrementAndGet()
+          val key = s"${if (selfTyped) "SELF-TYPED " else ""}$th at cursor ${clazz.name} (prefix $at) -> $res; link [$link] (applied at ${StackProfile.mintSite()})"
+          earlyExitSamples.synchronized {
+            earlyExitSamples.get(key) match {
+              case Some(n) => n.incrementAndGet()
+              case None if earlyExitSamples.size < MaxShapes => earlyExitSamples(key) = new AtomicInteger(1)
+              case None =>
+            }
+          }
+        }
+      }
+
+    def report(sb: StringBuilder): Unit = if (enabled) {
+      sb.append(s"  early exit: ${earlyExits.get} rewrites; ${earlyExitsOffChain.get} of a this-type off the anchor's owner chain (${earlyExitsSelfTyped.get} self-typed)\n")
+      val (self, plain) = earlyExitSamples.synchronized(earlyExitSamples.toSeq).sortBy(-_._2.get).partition(_._1.startsWith("SELF-TYPED"))
+      (plain.take(80) ++ self.take(40)).foreach { case (k, n) => sb.append(f"    ${n.get}%6d  $k\n") }
+      sb.append(s"  inheritor census: ${candidates.get} links with an inheritor-of-anchor this-leaf off the owner chain (${alsoA1.get} also A1-marked); ${moved.get} map their own target elsewhere (${movedSelfTyped.get} via a self-typed owner)\n")
+      movedSamples.synchronized(movedSamples.toSeq).sortBy(-_._2.get).foreach { case (k, n) =>
+        sb.append(f"    ${n.get}%6d  $k\n")
+      }
+    }
+
+    def reset(): Unit = {
+      candidates.set(0); alsoA1.set(0); moved.set(0); movedSelfTyped.set(0)
+      movedSamples.synchronized(movedSamples.clear())
+      earlyExits.set(0); earlyExitsOffChain.set(0); earlyExitsSelfTyped.set(0)
+      earlyExitSamples.synchronized(earlyExitSamples.clear())
+    }
+  }
 
   private def duplicated(link: ThisTypeSubstitution, mintSites: String): Unit =
     violated(Rule.FixedTarget, s"self-rooted [$link] occurs twice in one chain (minted at $mintSites)")
