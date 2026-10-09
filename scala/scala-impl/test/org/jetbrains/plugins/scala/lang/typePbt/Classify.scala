@@ -144,11 +144,6 @@ object Classify {
     case TBuiltin(_)      => false
   }
 
-  private def nothingMembers(p: Program): Set[String] = declarations(p).collect {
-    case (_, TypeMem(n, Some(TBuiltin("Nothing")), _)) => n
-    case (_, TypeMem(n, None, Some(TBuiltin("Nothing")))) => n
-  }.toSet
-
   private def isNull(p: Program, t: Tp): Boolean = t == TBuiltin("Null") || designated(t).exists { n =>
     declarations(p).exists { case (_, TypeMem(`n`, Some(TBuiltin("Null")), _)) => true; case _ => false }
   }
@@ -175,14 +170,13 @@ object Classify {
         lhs(f).flatMap(designated).exists(abstractTypes(f.program))
     ),
     KnownIssue(
-      "null-conforms-nothing-member",
-      "Null <: T holds in the plugin where T is Nothing in disguise: a type member that is, or is bounded by, Nothing " +
-        "(`type M = Nothing`, `type M <: Nothing`), or a compound with a Nothing part (`Nothing with Any`); also with " +
-        "Null itself reached through an alias. scalac says no.",
-      f => f.check == "conforms" && f.direction == "unsound" && lhs(f).exists(isNull(f.program, _)) && rhs(f).exists {
-        case TWith(ps, _) => ps.contains(TBuiltin("Nothing"))
-        case t            => designated(t).exists(nothingMembers(f.program))
-      }
+      "null-alias-vs-refinement",
+      "An alias of Null on the left (`type M1 = Null`, then k0.M1) doesn't conform to a refined type such as " +
+        "`Any { type M7 = Any }` or `AnyRef { def foo: Int }` in the plugin; scalac has Null <: every refinement of a " +
+        "type admitting null. Plain Null does conform. (The opposite family, Null <: types equivalent to Nothing or " +
+        "abstract types bounded by a class, is fixed in admitsNull.)",
+      f => f.check == "conforms" && f.direction == "incomplete" && lhs(f).exists(isNull(f.program, _)) &&
+        rhs(f).exists { case TWith(_, refs) => refs.nonEmpty; case _ => false }
     ),
     KnownIssue(
       "same-named-type-members",
