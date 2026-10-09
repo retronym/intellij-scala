@@ -158,23 +158,26 @@ object Classify {
   val known: List[KnownIssue] = List(
     KnownIssue(
       "baseType-singleton",
-      "BaseTypes.baseType(p.type, C) is None where scalac widens p.type to p's type: supersOf widens a singleton only " +
-        "through designatorSingletonType, which is gated to stable overridable members.",
+      "BaseTypes.baseType(p.type, C) was None where scalac widens p.type to p's type. (Fixed: supersOf widened the " +
+        "singleton but then yielded the widened type's parents rather than the widened type, so C itself was lost " +
+        "when C was p's declared class; a singleton's direct super is now its widened type.)",
       f => f.check == "baseType" && f.direction == "incomplete" && lhs(f).exists(_.isInstanceOf[TSingle])
     ),
     KnownIssue(
       "baseType-abstract-type",
-      "BaseTypes.baseType(M, C) is None for an abstract type member M <: C; scalac takes the base type of the upper " +
-        "bound. supersOf's IsTypeAlias only unwraps alias definitions, not declarations.",
+      "BaseTypes.baseType(M, C) was None for an abstract type member M <: C; scalac takes the base type of the upper " +
+        "bound. (Fixed: supersOf's IsTypeAlias only unwrapped alias definitions; an abstract type's direct super is " +
+        "now its upper bound.)",
       f => f.check == "baseType" && f.direction == "incomplete" &&
         lhs(f).flatMap(designated).exists(abstractTypes(f.program))
     ),
     KnownIssue(
       "null-alias-vs-refinement",
-      "An alias of Null on the left (`type M1 = Null`, then k0.M1) doesn't conform to a refined type such as " +
+      "Fixed. An alias of Null on the left (`type M1 = Null`, then k0.M1) didn't conform to a refined type such as " +
         "`Any { type M7 = Any }` or `AnyRef { def foo: Int }` in the plugin; scalac has Null <: every refinement of a " +
-        "type admitting null. Plain Null does conform. (The opposite family, Null <: types equivalent to Nothing or " +
-        "abstract types bounded by a class, is fixed in admitsNull.)",
+        "type admitting null. Plain Null did conform. ScalaConformance's compound visitor looked up the refinement's " +
+        "members in the alias as written; it now retries with the aliased type when that fails (aliases of Nothing too). " +
+        "(The opposite family, Null <: types equivalent to Nothing or abstract types bounded by a class, is fixed in admitsNull.)",
       f => f.check == "conforms" && f.direction == "incomplete" && lhs(f).exists(isNull(f.program, _)) &&
         rhs(f).exists { case TWith(_, refs) => refs.nonEmpty; case _ => false }
     ),
@@ -228,15 +231,25 @@ object Classify {
       "SubstitutorInvariants A1 throws (Fail in tests) for a this-link minted in MixinNodes.SuperTypesData for a refined " +
         "compound with a singleton part, e.g. `(T0 with this.type) with this.I5 { type M3 = Any }` in a subtrait of the " +
         "declarer of I5/M3, or `(T0 with a15.I6 { type M3 = Any }) with v14.I6` with `v14: k0.type; a15: v14.type`. " +
-        "Not yet analysed whether the link is wrong or A1 is too strict.",
+        "(Partly fixed, as far as retronym/scala-type-system-tck#7 justifies. Admitted: a compound target with a part " +
+        "rooted in the anchor's own this-type, `T1.this -> T1 with T1.this.M3` (self-rooted, right once: " +
+        "partRooted_once_is_scalac, wrong twice: partRooted_twice_diverges), and a compound that comes back respelled " +
+        "up to singleton aliases and the order/repetition of its parts, `T0 with a15.I6 with v14.I6` to `T0 with k0.I6` " +
+        "(fixed: once_is_scalac_eqv; no longer by mutual conformance). Still reported: a part rooted in an inheritor's " +
+        "this-type, `T2.this -> T0 with T3.this.type with T3.this.I5` (T3 <: T2) or `T0.this -> K0 with T1.this.I1`, " +
+        "which only the plugin's unmodelled superclass early exit moves. The real defect was a second copy of the link: " +
+        "ScProjectionType.processType prepended the same compound view that the compound's signatures already carry, " +
+        "and it no longer does.)",
       f => f.check == "pluginException" && f.plugin.contains("A1 violated") && f.plugin.contains("MixinNodes")
     ),
     KnownIssue(
       "a1-projection-unstable-prefix",
       "SubstitutorInvariants A1 throws for a this-link minted in ScProjectionType.processType, reading a member through " +
         "a val typed by a projection: `val v12: K0#I5` in T2 (I5 extends I2, an inner trait of T2 with `val v13: T2`), " +
-        "then `this.v12.v13.I1`. The link `this -> T2.this.v12.type asSeenFrom I2` maps its target to K0#v12. Related " +
-        "to unstable-prefix-this.",
+        "then `this.v12.v13.I1`. The link `this -> T2.this.v12.type asSeenFrom I2` maps its target to K0#v12. " +
+        "(Fixed in A1: the link is scalac's, and scalac doesn't fix its target either, capturing the unstable K0 " +
+        "existentially where the plugin substitutes K0, as in unstable-prefix-this. A path target rooted in an enclosing " +
+        "class's this-type now counts as outer-rooted, allowed once, by once_is_scalac.)",
       f => f.check == "pluginException" && f.plugin.contains("A1 violated") && f.plugin.contains("ScProjectionType")
     ),
     KnownIssue(
