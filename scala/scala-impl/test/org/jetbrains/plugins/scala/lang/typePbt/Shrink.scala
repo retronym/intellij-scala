@@ -66,15 +66,19 @@ object Shrink {
       case TSingle(p) =>
         path(p).map(TSingle(_))
       case TWith(parts, refs) =>
-        val keepOne = parts.to(LazyList).map(p => if (refs.isEmpty) p else TWith(List(p), refs))
-        val dropRef = LazyList.from(refs.indices).map(i => TWith(parts, refs.patch(i, Nil, 1)))
-        val inParts = LazyList.from(parts.indices).flatMap(i => tp(parts(i)).map(p => TWith(parts.updated(i, p), refs)))
-        val inRefs = LazyList.from(refs.indices).flatMap(i => tp(refs(i)._2).map(r => TWith(parts, refs.updated(i, refs(i)._1 -> r))))
+        val keepOne = if (parts.size < 2) LazyList.empty else parts.to(LazyList).map(p => compound(List(p), refs))
+        val dropRef = LazyList.from(refs.indices).map(i => compound(parts, refs.patch(i, Nil, 1)))
+        val inParts = LazyList.from(parts.indices).flatMap(i => tp(parts(i)).map(p => compound(parts.updated(i, p), refs)))
+        val inRefs = LazyList.from(refs.indices).flatMap(i => tp(refs(i)._2).map(r => compound(parts, refs.updated(i, refs(i)._1 -> r))))
         keepOne #::: dropRef #::: inParts #::: inRefs
       case TBuiltin(_) => LazyList.empty
     }
     trivial #::: structural
   }
+
+  /** A single unrefined part prints as itself, so it must be itself. */
+  private def compound(parts: List[Tp], refs: List[(String, Tp)]): Tp =
+    if (parts.size == 1 && refs.isEmpty) parts.head else TWith(parts, refs)
 
   private def path(p: Path): LazyList[Path] = p match {
     case PSel(q, n) => q #:: path(q).map(PSel(_, n))
