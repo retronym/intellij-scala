@@ -119,6 +119,39 @@ object Classify {
     }
   }
 
+  /** Type member names, declared or refined (with repetitions). */
+  private def typeMemberNames(p: Program): List[String] = {
+    def refined(t: Tp): List[String] = t match {
+      case TRef(_, _, args) => args.flatMap(refined)
+      case TProj(q, _)      => refined(q)
+      case TWith(ps, refs)  => ps.flatMap(refined) ++ refs.flatMap(r => r._1 :: refined(r._2))
+      case _                => Nil
+    }
+    declarations(p).flatMap {
+      case (_, TypeMem(n, a, h)) => n :: (a.toList ++ h.toList).flatMap(refined)
+      case (_, ValMem(_, t))     => refined(t)
+      case (_, Query(_, t))      => refined(t)
+      case _                     => Nil
+    } ++ p.members.collect { case ClassMem(c) => c }.flatMap(c => (c.parents ++ c.self.toList).flatMap(refined))
+  }
+
+  private def mentionsAny(t: Tp, names: Set[String]): Boolean = t match {
+    case TRef(_, n, args) => names(n) || args.exists(mentionsAny(_, names))
+    case TProj(q, n)      => names(n) || mentionsAny(q, names)
+    case TSingle(_)       => false
+    case TWith(ps, refs)  => ps.exists(mentionsAny(_, names)) || refs.exists(r => names(r._1) || mentionsAny(r._2, names))
+    case TBuiltin(_)      => false
+  }
+
+  private def nothingMembers(p: Program): Set[String] = declarations(p).collect {
+    case (_, TypeMem(n, Some(TBuiltin("Nothing")), _)) => n
+    case (_, TypeMem(n, None, Some(TBuiltin("Nothing")))) => n
+  }.toSet
+
+  private def isNull(p: Program, t: Tp): Boolean = t == TBuiltin("Null") || designated(t).exists { n =>
+    declarations(p).exists { case (_, TypeMem(`n`, Some(TBuiltin("Null")), _)) => true; case _ => false }
+  }
+
   private def lhs(f: Finding): Option[Tp] = queryType(f.program, f.question.ids.head)
   private def rhs(f: Finding): Option[Tp] = queryType(f.program, f.question.ids(1))
 
@@ -141,20 +174,25 @@ object Classify {
         lhs(f).flatMap(designated).exists(abstractTypes(f.program))
     ),
     KnownIssue(
-      "null-conforms-abstract-type",
-      "Null <: M holds in the plugin for an abstract type member M (seen with M <: Nothing); scalac needs Null <: M's lower bound.",
+      "null-conforms-nothing-member",
+      "Null <: M holds in the plugin for a type member M that is, or is bounded by, Nothing (`type M = Nothing`, " +
+        "`type M <: Nothing`), also with Null itself reached through an alias; scalac says no.",
       f => f.check == "conforms" && f.direction == "unsound" &&
-        lhs(f).contains(TBuiltin("Null")) && rhs(f).flatMap(designated).exists(abstractTypes(f.program))
+        lhs(f).exists(isNull(f.program, _)) && rhs(f).flatMap(designated).exists(nothingMembers(f.program))
     ),
     KnownIssue(
-      "abstract-type-vs-mixed-in-alias",
-      "A type member declared abstract in one trait and as an alias in another, unrelated trait (mixed in, or the self " +
-        "type): in the composition the alias wins in scalac, but the plugin keeps the abstract member (k.M <: T#M " +
-        "holds in the plugin, while scalac dealiases k.M). The plugin does know K#M =:= Any, yet also says " +
-        "K#M <: T1#M, where T1#M is the unrelated abstract M. Cause not located yet.",
-      f => Set("conforms", "equiv")(f.check) && f.direction == "unsound" && {
-        val both = abstractTypes(f.program) intersect aliasTypes(f.program)
-        (lhs(f).toList ++ rhs(f).toList).flatMap(designated).exists(both)
+      "same-named-type-members",
+      "Two type members of the same name meet in a composition (mixins, a self type, or a compound with a refinement) " +
+        "and the plugin picks a different one than scalac. `T0 { type M }`, `T1 extends T0`, `T2 { type M = Any }`, " +
+        "`K extends T1 with T2`: the plugin has K#M =:= Any but also K#M <: T1#M and k.M <: T1#M. Inside " +
+        "`trait T2 { self: T1 => type M4 = Nothing }` with `T1 { type M4 = Any }`, scalac's this.M4 is T1's (Any), the " +
+        "plugin's T2's. `(Any { type M4 = k1.M4 }) with K1 <: Any { type M4 = k1.M4 }` holds in the plugin; in scalac " +
+        "K1's M4 (seen from the compound's this) wins. Incomplete too: `trait T2 extends T1 { self: T3 => type M5 = this.M1 }` " +
+        "with M1 abstract in T0 and `= Nothing` in T3: scalac has v19.M5 <: Nothing for `v19: T2`, the plugin doesn't. " +
+        "Cause not located yet.",
+      f => Set("conforms", "equiv")(f.check) && {
+        val twice = typeMemberNames(f.program).groupBy(identity).collect { case (n, ns) if ns.size > 1 => n }.toSet
+        twice.nonEmpty && (lhs(f).toList ++ rhs(f).toList).exists(t => mentionsAny(t, twice))
       }
     ),
     KnownIssue(
@@ -184,12 +222,28 @@ object Classify {
       }
     ),
     KnownIssue(
-      "a1-refined-compound-with-singleton",
+      "a1-mixin-nodes-refined-compound",
       "SubstitutorInvariants A1 throws (Fail in tests) for a this-link minted in MixinNodes.SuperTypesData for a refined " +
         "compound with a singleton part, e.g. `(T0 with this.type) with this.I5 { type M3 = Any }` in a subtrait of the " +
         "declarer of I5/M3, or `(T0 with a15.I6 { type M3 = Any }) with v14.I6` with `v14: k0.type; a15: v14.type`. " +
         "Not yet analysed whether the link is wrong or A1 is too strict.",
-      f => f.check == "pluginException" && f.plugin.contains("A1 violated") && f.features("refinement") && f.features("singleton")
+      f => f.check == "pluginException" && f.plugin.contains("A1 violated") && f.plugin.contains("MixinNodes")
+    ),
+    KnownIssue(
+      "a1-projection-unstable-prefix",
+      "SubstitutorInvariants A1 throws for a this-link minted in ScProjectionType.processType, reading a member through " +
+        "a val typed by a projection: `val v12: K0#I5` in T2 (I5 extends I2, an inner trait of T2 with `val v13: T2`), " +
+        "then `this.v12.v13.I1`. The link `this -> T2.this.v12.type asSeenFrom I2` maps its target to K0#v12. Related " +
+        "to unstable-prefix-this.",
+      f => f.check == "pluginException" && f.plugin.contains("A1 violated") && f.plugin.contains("ScProjectionType")
+    ),
+    KnownIssue(
+      "baseType-merges-this-leak",
+      "BaseTypes.baseType reaches a class along two parents (an inner class extending I2 with I1, I2 extends I1) and " +
+        "merges two spellings of it into a compound, one with a this-type that isn't in scope: baseType(T1#I4, I1) = " +
+        "`T0.this.I1 with T1#I1` (T0 is T1's self type); baseType(this.v11.M5, I1) = `T0.this.v11.I1 with K1.this.v11.I1`. " +
+        "The type doesn't conform to that merged base type; it does to scalac's.",
+      f => f.check == "baseTypeIsSuper" && f.plugin.contains(" with ")
     ),
   )
 

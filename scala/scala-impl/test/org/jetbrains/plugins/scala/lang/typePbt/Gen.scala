@@ -270,7 +270,7 @@ final class Gen(rnd: Random, config: Gen.Config = Gen.Config()) {
   private def genType(scope: Scope, depth: Int, classOnly: Boolean = false): (Tp, Option[Cls]) = {
     val ps = paths(scope)
     val options = ListBuffer.empty[(Double, () => (Tp, Option[Cls]))]
-    if (!classOnly) options += 0.5 -> (() => (TBuiltin(pick(List("Any", "AnyRef", "Nothing", "Null", "Int", "String"))): Tp) -> (None: Option[Cls]))
+    if (!classOnly) options += config.builtinWeight -> (() => (TBuiltin(pick(List("Any", "AnyRef", "Nothing", "Null", "Int", "String"))): Tp) -> (None: Option[Cls]))
     options += 1.0 -> { () => val c = pick((traits ++ composites).toSeq); TRef(None, c.name, Nil) -> Some(c) }
     val projectable = (traits ++ composites).filter(c => typeMembers(c, viaThis = false).nonEmpty)
     if (projectable.nonEmpty) options += 1.5 -> { () =>
@@ -297,6 +297,13 @@ final class Gen(rnd: Random, config: Gen.Config = Gen.Config()) {
         val refinable = ac.toList.flatMap(c => c.ancestors.flatMap(_.typeMems.filter(_._3).map(_._1)))
         val refs = if (refinable.nonEmpty && chance(0.3)) List(pick(refinable) -> genType(scope, depth - 1)._1) else Nil
         TWith(List(a, b), refs) -> ac
+      }
+      // C { type M = T }, refining an abstract type member of C
+      val refinableClasses = (traits ++ composites).filter(_.ancestors.exists(_.typeMems.exists(_._3)))
+      if (refinableClasses.nonEmpty) options += config.refinementWeight -> { () =>
+        val c = pick(refinableClasses.toSeq)
+        val m = pick(c.ancestors.flatMap(_.typeMems.filter(_._3).map(_._1)))
+        TWith(List(TRef(None, c.name, Nil)), List(m -> genType(scope, depth - 1)._1)) -> Some(c)
       }
     }
     val total = options.map(_._1).sum
@@ -352,5 +359,7 @@ object Gen {
     maxPathDepth: Int = 3,
     queriesPerProgram: Int = 8,
     pairsPerProgram: Int = 16,
+    refinementWeight: Double = 0.6,
+    builtinWeight: Double = 0.7,
   )
 }

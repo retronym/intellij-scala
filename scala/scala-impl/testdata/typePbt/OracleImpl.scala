@@ -33,7 +33,16 @@ class OracleImpl(classpath: String) extends java.util.function.BiFunction[String
     new Global(settings, new StoreReporter(settings))
   }
 
-  def apply(source: String, queries: Array[String]): Array[String] = {
+  def apply(source: String, queries: Array[String]): Array[String] =
+    try answer(source, queries)
+    catch {
+      case t: Throwable =>
+        // e.g. a StackOverflowError inside the typer: the Global may be inconsistent now
+        global = null
+        Array("ERR", "scalac crashed: " + String.valueOf(t).replace('\n', ' '))
+    }
+
+  private def answer(source: String, queries: Array[String]): Array[String] = {
     // Each program lives in its own package, so one Global can type many of
     // them; renew it now and then to bound the symbol table.
     if (global == null || runs >= 100) { global = freshGlobal(); runs = 0 }
