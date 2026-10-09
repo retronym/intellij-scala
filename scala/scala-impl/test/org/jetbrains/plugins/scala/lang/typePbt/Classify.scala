@@ -105,9 +105,10 @@ object Classify {
   /** Whether `t` mentions `this`, explicitly or through a bare member type name in `members`. */
   private def mentionsThis(t: Tp, members: Set[String]): Boolean = {
     def path(p: Path): Boolean = p match {
-      case PThis(_)   => true
-      case PSel(q, _) => path(q)
-      case PId(_)     => false
+      case PThis(_)    => true
+      case PSel(q, _)  => path(q)
+      case PId("self") => true // the self alias
+      case PId(_)      => false
     }
     t match {
       case TRef(None, n, args) => members(n) || args.exists(mentionsThis(_, members))

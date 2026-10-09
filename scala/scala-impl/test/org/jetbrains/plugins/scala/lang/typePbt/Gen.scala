@@ -222,7 +222,7 @@ final class Gen(rnd: Random, config: Gen.Config = Gen.Config()) {
     case TRef(_, m, args) => m == n || args.exists(mentionsName(_, n))
     case TProj(q, m)      => m == n || mentionsName(q, n)
     case TSingle(_)       => false
-    case TWith(ps, refs)  => ps.exists(mentionsName(_, n)) || refs.exists(r => mentionsName(r._2, n))
+    case TWith(ps, refs)  => ps.exists(mentionsName(_, n)) || refs.exists(r => r._1 == n || mentionsName(r._2, n))
     case TBuiltin(_)      => false
   }
 
