@@ -217,7 +217,18 @@ class TypePbtTest extends ScalaLightCodeInsightFixtureTestCase {
     }
 
     // shrink one finding per (check, question) per program, then group by signature
-    val shrunk = raw.distinctBy { case (s, f) => (s, f.check, f.question) }.map { case (s, f) => s -> shrink(f, shrinkBudget) }
+    // A raw finding that already matches a known issue is shrunk only for the first few examples of it:
+    // shrinking dominates run time, and the known `baseType` issues dominate the findings.
+    val examplesPerKnownIssue = prop("examplesPerKnownIssue", "3").toInt
+    val knownRaw = mutable.Map.empty[String, Int].withDefaultValue(0)
+    val shrunk = raw.distinctBy { case (s, f) => (s, f.check, f.question) }.flatMap { case (s, f) =>
+      Classify.classify(f) match {
+        case Some(issue) if knownRaw(issue.id) >= examplesPerKnownIssue => knownRaw(issue.id) += 1; None
+        case known =>
+          known.foreach(i => knownRaw(i.id) += 1)
+          Some(s -> shrink(f, shrinkBudget))
+      }
+    }
     val bySignature = shrunk.groupBy(_._2.signature).toSeq.sortBy(-_._2.size)
     var unknown = 0
     report += s"# TypePbtTest seed=$seed count=$count"
@@ -227,7 +238,8 @@ class TypePbtTest extends ScalaLightCodeInsightFixtureTestCase {
     report += s"programs with feature: ${featureCoverage.toSeq.sortBy(-_._2).map { case (k, v) => s"$k=$v" }.mkString(", ")}"
     report += s"findings: ${raw.size} raw, ${shrunk.size} shrunk, ${bySignature.size} signatures"
     val byIssue = shrunk.groupBy(x => Classify.classify(x._2).fold("UNKNOWN")(_.id)).view.mapValues(_.size).toSeq.sortBy(-_._2)
-    report += s"classified: ${byIssue.map { case (k, v) => s"$k=$v" }.mkString(", ")}"
+    report += s"known in raw form: ${knownRaw.toSeq.sortBy(-_._2).map { case (k, v) => s"$k=$v" }.mkString(", ")} (only $examplesPerKnownIssue of each shrunk)"
+    report += s"classified after shrinking: ${byIssue.map { case (k, v) => s"$k=$v" }.mkString(", ")}"
     for ((sig, fs) <- bySignature) {
       val (s, f) = fs.minBy(x => Ast.show(x._2.program, "p").length)
       val issue = Classify.classify(f)
