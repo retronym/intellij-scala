@@ -39,10 +39,13 @@ private case class ThisTypeSubstitution(target: ScType, seenFromClass: PsiClass)
   @volatile private[recursiveUpdate] var a1MintSite: String = null
   @volatile private[recursiveUpdate] var a1Kind: Int = SubstitutorInvariants.A1Unchecked
   @volatile private[recursiveUpdate] var a1Duplicate: SubstitutorInvariants.A1Duplicate = null
+  /** [[SubstitutorInvariants.InheritorCensus]]'s mint site, cleared once the link has been counted. */
+  @volatile private[recursiveUpdate] var censusMintSite: String = null
 
   override protected val subst: PartialFunction[LeafType, ScType] = {
     case th: ScThisType =>
       TypeRecursionGuard.nestedSubstitution(th, s"$th with $this") {
+        if (censusMintSite != null) SubstitutorInvariants.InheritorCensus.onFirstUse(this)
         if (a1MintSite != null && a1Kind == SubstitutorInvariants.A1Unchecked) SubstitutorInvariants.fixedTargetOnFirstUse(this)
         val res = doUpdateThisTypeFromClass(th, target, seenFromClass)
         if (SubstitutorInvariants.enabled(SubstitutorInvariants.Rule.NoReentry) && (res ne th) && ThisTypeSubstitution.embedsRewrittenThis(res, th))
@@ -78,8 +81,11 @@ private case class ThisTypeSubstitution(target: ScType, seenFromClass: PsiClass)
     // `Definitions` (`SymbolTable <: Definitions`), seen from `g: Global`, must become
     // `g.Type`. The subclass test keeps the cross-symbol case out (there, `Infer` is not a
     // subclass of the cursor `Typer`), so owner-chain matching below still applies to it.
-    if (isInheritorDeep(thisTp.element, clazz) && isMoreNarrow(target, thisTp, Set.empty))
-      doUpdateThisType(thisTp, target)
+    if (ThisTypeSubstitution.earlyExitEnabled && isInheritorDeep(thisTp.element, clazz) && isMoreNarrow(target, thisTp, Set.empty)) {
+      val res = doUpdateThisType(thisTp, target)
+      if (SubstitutorInvariants.InheritorCensus.enabled) SubstitutorInvariants.InheritorCensus.earlyExit(this, thisTp, clazz, target, res)
+      res
+    }
     else if (clazz == thisTp.element || clazz.containingClass == null) {
       if (ownerChainMatches(clazz, target, thisTp)) doUpdateThisType(thisTp, target)
       else leftAlone(thisTp)
@@ -256,6 +262,9 @@ private case class ThisTypeSubstitution(target: ScType, seenFromClass: PsiClass)
 }
 
 private object ThisTypeSubstitution {
+
+  /** EXPERIMENT: `-Dscala.types.thisTypeEarlyExit=false` drops the superclass early exit of `doUpdateThisTypeFromClass`. */
+  val earlyExitEnabled: Boolean = !"false".equals(System.getProperty("scala.types.thisTypeEarlyExit"))
 
   @tailrec
   private def spineRootThis(tp: ScType): Option[ScThisType] = tp match {
