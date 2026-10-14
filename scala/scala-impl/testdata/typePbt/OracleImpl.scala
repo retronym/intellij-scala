@@ -68,7 +68,9 @@ class OracleImpl(classpath: String) extends java.util.function.BiFunction[String
     run.units.foreach(u => collect(u.body))
     def tpe(id: String): Type = {
       val sym = aliases.getOrElse(id, throw new NoSuchElementException(s"no alias __q_$id"))
-      typeRef(sym.owner.thisType, sym, Nil).dealias
+      // One step: the alias's right-hand side as written. `dealias` would also expand aliases in it (`p.M` for an alias
+      // member `M`), which hides scalac's name-based projection rule (`sym2.isAbstractType && isSubPre(pre1, pre2, sym2)`).
+      typeRef(sym.owner.thisType, sym, Nil).betaReduce
     }
 
     val answers = queries.map { q =>
@@ -76,11 +78,11 @@ class OracleImpl(classpath: String) extends java.util.function.BiFunction[String
         case Array("C", a, b) => (tpe(a) <:< tpe(b)).toString
         case Array("E", a, b) => (tpe(a) =:= tpe(b)).toString
         case Array("B", a, c) =>
-          val bt = tpe(a).baseType(tpe(c).typeSymbol)
+          val bt = tpe(a).baseType(tpe(c).dealias.typeSymbol)
           if (bt == NoType) "none" else "some\t" + bt
         case Array("S", a, c) =>
           val t = tpe(a)
-          val bt = t.baseType(tpe(c).typeSymbol)
+          val bt = t.baseType(tpe(c).dealias.typeSymbol)
           if (bt == NoType) "none" else (t <:< bt).toString
         case other => "exc\tbad query " + other.mkString(" ")
       } catch { case t: Throwable => "exc\t" + String.valueOf(t).replace('\n', ' ') }
