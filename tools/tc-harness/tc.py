@@ -97,6 +97,8 @@ def make_parser():
     ap.add_argument("--json", action="store_true", help="print raw responses")
     ap.add_argument("--with", dest="with_", action="append", default=[], help="extra file sent along (with --each or //> tc: relative to the probe)")
     ap.add_argument("--each", action="store_true", help="one request per file (directories: their *.scala)")
+    ap.add_argument("--serial", action="store_true", help="query the servers one after the other (no load from each other)")
+    ap.add_argument("--repeat", type=int, default=1, help="with --each: send each probe N times; ~ marks a probe whose results vary")
     ap.add_argument("-v", "--verbose", action="store_true", help="with --each: full report for files that disagree")
     ap.add_argument("--health", action="store_true")
     ap.add_argument("--shutdown", action="store_true")
@@ -117,9 +119,12 @@ def request(a, files):
             "oracle": not a.no_oracle, "warnings": a.warnings, "fresh": a.fresh}
 
 
+SERIAL = False
+
+
 def run(servers, req):
     body = dict(req, queries=[{k: v for k, v in q.items() if not k.startswith("_")} for q in req["queries"]])
-    with ThreadPoolExecutor(len(servers)) as ex:
+    with ThreadPoolExecutor(1 if SERIAL else len(servers)) as ex:
         return drop_noise(req, list(ex.map(lambda s: post(s[1], "/check", body), servers)))
 
 
@@ -197,6 +202,8 @@ def summary(r):
 def main():
     ap = make_parser()
     a = ap.parse_args()
+    global SERIAL
+    SERIAL = a.serial
     servers = [(s, SERVERS.get(s) or int(s)) for s in a.server.split(",")]
     if a.health or a.shutdown:
         for name, port in servers:
@@ -213,11 +220,15 @@ def main():
             fa = ap.parse_args(sys.argv[1:] + file_options(text))
             extra = [os.path.join(os.path.dirname(p), w) for w in fa.with_ if w not in a.with_] + a.with_
             files = [{"path": os.path.basename(p), "text": text}] + [{"path": os.path.basename(w), "text": open(w).read()} for w in extra]
-            resps = run(servers, request(fa, files))
-            line = "  ".join(f"{n}={summary(r)}" for (n, _), r in zip(servers, resps))
-            ok = all(summary(r) == "ok" for r in resps)
+            req = request(fa, files)
+            runs = [run(servers, req) for _ in range(max(1, a.repeat))]
+            resps = runs[-1]
+            per_server = [sorted({summary(rs[i]) for rs in runs}) for i in range(len(servers))]
+            line = "  ".join(f"{n}={'|'.join(ss)}" for (n, _), ss in zip(servers, per_server))
+            flaky = any(len(ss) > 1 for ss in per_server)
+            ok = not flaky and all(ss == ["ok"] for ss in per_server)
             bad += not ok
-            print(f"{'  ' if ok else '✗ '}{p}: {line}", flush=True)
+            print(f"{'  ' if ok else '~ ' if flaky else '✗ '}{p}: {line}", flush=True)
             for (n, _), r in zip(servers, resps):
                 if "error" in r:
                     print(f"    {n}: {r['error'].strip().splitlines()[0][:300]}")

@@ -81,6 +81,8 @@ val x: c.Out = c.print("a")   // IntelliJ: Cannot resolve symbol Out / print; sc
 
 Either export alone, or the other order, is fine. Probe: `probes/s3/export-order.scala`.
 
+On base the result depends on timing: run alone it fails every time, but with the tip server highlighting at the same moment (`tc.py --each --repeat 3`, both servers in parallel) base sometimes reports no errors for `export-order.scala` and `exports.scala`, with nothing logged. The tip fails every time. Possibly a race between highlighting passes in export resolution; not investigated.
+
 ### Scala 3: union types widened, primitives not Matchable
 
 ```scala

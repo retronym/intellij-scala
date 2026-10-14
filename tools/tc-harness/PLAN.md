@@ -10,6 +10,9 @@
 - Exploratory refinements: `tc.py --each` over probe directories with per-file `//> tc` options and `--with` companions; `tc-ab.sh` rebuilds and restarts the pair.
 - Oracle fixes found by using it: queries are answered at typer's end (a run with errors resets its symbols); alias operands expand one step (`dealias` changed answers); runs go through refchecks, diagnostics from a run without the query file; Scala 3 gets a fresh ContextBase per compile (definitions leaked between requests); request Java files are compiled by javac.
 - Type answers are compared by scalac (mutual conformance with IntelliJ's canonical text), not as text.
+- `tc.py --infer` (on with `--each`) queries the type of every unannotated definition; queries on lines scalac rejects are dropped. Oracle lookup skips synthetic companions and param accessors, IntelliJ's skips case/lambda bindings, so both resolve a name to the same definition.
+- Highlighting waits for indexes: right after an environment switch, dumb-mode highlighting hid unresolved references (a false "agree").
+- `--fresh` (new light project for the request), `--repeat N` (`~` marks results that vary), `--serial` (servers one after the other).
 
 ## Findings
 
@@ -19,6 +22,7 @@ See FINDINGS.md.
 
 - A request that hangs or recurses forever blocks the server: no timeout or cancellation of highlighting yet. Restart it.
 - Diagnostics are matched by line only; messages are not compared.
+- Results can depend on timing (see the export finding): the default queries both servers at once; use `--serial` / `--repeat` to confirm.
 - A type answer whose IntelliJ canonical text doesn't type in scalac (this-types, locals, Scala 3 syntax in Scala 2) falls back to a textual comparison.
 - scalac runs nothing after refchecks: errors from later phases are not compared. When typer reports errors scalac stops there, while IntelliJ still reports refchecks-like errors.
 - Expression types: a query for the type of an arbitrary expression (by range or marker) rather than of a named definition.
