@@ -22,7 +22,7 @@ object AP {
 
 scalac keeps the name-based arm for an alias member (`sym2.isAbstractType && isSubPre(pre1, pre2, sym2)` in `isSubType2`). The commit's premise ("scalac dealiases it first") came from the PBT oracle, which evaluates operands with `.dealias` and so expands `k.M` before `<:<` sees it; the harness oracle had the same bug (fixed: one-step `betaReduce`). `testMixedInAliasDoesNotConformToAbstractMemberOfSameName` pins the wrong answer. Probe: `probes/s2/alias-projection.scala`.
 
-### An alias overriding an alias is no longer checked for equivalence (b3d1e57b10)
+### An alias overriding an alias is no longer checked for equivalence (b3d1e57b10) — fixed in e5911c7e26
 
 ```scala
 trait HasT { type T = Int }
@@ -35,7 +35,7 @@ class Pd extends HasP[Int] { override type P = String }          // same
 
 Base reports "cannot override final member" for every alias over alias (right by accident here, wrong for equivalent ones). The tip drops that error and, as its commit message says, doesn't check equivalence, so incompatible overrides now pass. Probe: `probes/pr723/override-var.scala`.
 
-### A lambda's parameter escapes into its inferred type (likely 72904c0733)
+### A lambda's parameter escapes into its inferred type (72904c0733) — fixed in 30d16c0677
 
 ```scala
 trait Key { type V; def default: V }
@@ -50,7 +50,7 @@ Inside the lambda `get(k)` is now `k.V` (a stable path argument stands for its s
 
 ## Gaps in the tip's fixes
 
-### Null ineligible for implicit conversion, but not through an alias (d88764da5b)
+### Null ineligible for implicit conversion, but not through an alias (d88764da5b) — fixed in 7f302c9f09
 
 ```scala
 type N = Null
