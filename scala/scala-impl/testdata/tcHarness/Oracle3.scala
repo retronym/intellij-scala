@@ -14,21 +14,23 @@ import scala.collection.mutable
 
 /**
  * The Scala 3 side of the type-checking harness (`TcOracle`); the protocol is `Oracle2`'s.
- * One compiler (and so one `ContextBase` with its loaded classpath) is kept for all requests;
- * each request is a new `Run`, as in the REPL and the presentation compiler.
+ * Each compile gets a fresh compiler and `ContextBase` (see `Driver`).
  */
 class Oracle3(classpath: String, options: Array[String]) extends java.util.function.Function[Array[String], Array[String]] {
 
-  private object driver extends dotc.Driver {
+  // A fresh ContextBase per request: runs of one compiler share the symbol table, so top-level
+  // definitions of earlier requests would stay visible (as in the REPL). The classpath index is
+  // kept across ContextBases by dotty's own caches.
+  private final class Driver extends dotc.Driver {
     override protected def sourcesRequired: Boolean = false
-    lazy val rootContext: Context = {
+    val rootContext: Context = {
       val args = Array("-classpath", classpath, "-Ystop-after:refchecks", "-color:never") ++ options
       setup(args, initCtx.fresh) match {
         case Some((_, ctx)) => ctx
         case None           => throw new IllegalArgumentException("bad scalacOptions: " + options.mkString(" "))
       }
     }
-    lazy val compiler: dotc.Compiler = newCompiler(using rootContext)
+    val compiler: dotc.Compiler = newCompiler(using rootContext)
   }
 
   private def clean(s: String) = String.valueOf(s).replace('\t', ' ').replace('\n', ' ')
@@ -49,6 +51,7 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
   }
 
   private def compile(sources: Seq[(String, String)], queries: Array[String]): Array[String] = {
+    val driver = new Driver
     val reporter = new StoreReporter(null)
     given ctx0: Context = driver.rootContext.fresh.setReporter(reporter)
     val run = driver.compiler.newRun
