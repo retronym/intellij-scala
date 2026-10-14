@@ -32,7 +32,7 @@ import scala.jdk.CollectionConverters.*
  * when a request first needs this environment, `tearDown` when a request needs another one.
  * Between requests the project stays open: only the request's source files are replaced.
  */
-class TcWorker(val env: Env) extends ScalaLightCodeInsightFixtureTestCase {
+class TcWorker(val env: Env, generation: Int = 0) extends ScalaLightCodeInsightFixtureTestCase {
 
   setName("testWorker")
   def testWorker(): Unit = ()
@@ -53,7 +53,7 @@ class TcWorker(val env: Env) extends ScalaLightCodeInsightFixtureTestCase {
 
   override protected def additionalCompilerOptions: Seq[String] = env.scalacOptions
 
-  override protected def sharedProjectToken: SharedTestProjectToken = SharedTestProjectToken(("tc-harness", env))
+  override protected def sharedProjectToken: SharedTestProjectToken = SharedTestProjectToken(("tc-harness", env, generation)) // a new generation is a new light project
 
   /** Must run on the EDT. */
   def check(req: Request): TcWorker.Result = {
