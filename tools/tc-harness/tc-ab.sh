@@ -20,7 +20,8 @@ while lsof -a -d cwd -c java 2>/dev/null | grep -qE "$tip\$|$base\$"; do sleep 1
 git -C "$tip" diff --quiet HEAD -- tools/tc-harness scala/scala-impl/test/org/jetbrains/plugins/scala/tcHarness scala/scala-impl/testdata/tcHarness \
   || { echo "uncommitted harness changes in $tip"; exit 1; }
 git -C "$base" reset -q --hard "$baseUnder"
-git -C "$base" cherry-pick $(git -C "$tip" rev-list --reverse "$tipUnder"..HEAD) >/dev/null
+# only the harness commits (their titles say so); fixes under test on the tip stay off the base
+git -C "$base" cherry-pick $(git -C "$tip" rev-list --reverse --grep="type-checking harness" "$tipUnder"..HEAD) >/dev/null
 echo "base: $(git -C "$base" log --oneline -1)"
 
 start() { # worktree port label
