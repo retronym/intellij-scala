@@ -35,6 +35,19 @@ class Pd extends HasP[Int] { override type P = String }          // same
 
 Base reports "cannot override final member" for every alias over alias (right by accident here, wrong for equivalent ones). The tip drops that error and, as its commit message says, doesn't check equivalence, so incompatible overrides now pass. Probe: `probes/pr723/override-var.scala`.
 
+### A lambda's parameter escapes into its inferred type (likely 72904c0733)
+
+```scala
+trait Key { type V; def default: V }
+def get(k: Key): k.V = k.default
+val ks: List[Key] = ???
+val vs = ks.map(k => get(k))        // tip: List[k.V]     base, scalac: List[Key#V]
+val i = (k: Key) => get(k)          // tip: Key => k.V    base, scalac: Key => Key#V
+val first = ks.map(k => get(k)).head // tip: k.V
+```
+
+Inside the lambda `get(k)` is now `k.V` (a stable path argument stands for its singleton), which is right, but the function literal's result isn't avoided as a block's is (54e2259e44): scalac packs the escaping parameter. Errors still agree in the probes; inferred types (hints, "add type annotation") are wrong. Probe: `probes/pr723/lambda-param-escape.scala`.
+
 ## Gaps in the tip's fixes
 
 ### Null ineligible for implicit conversion, but not through an alias (d88764da5b)
