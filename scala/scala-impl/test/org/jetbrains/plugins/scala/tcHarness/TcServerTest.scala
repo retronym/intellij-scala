@@ -185,16 +185,23 @@ class TcServerTest extends TestCase {
       case ((q: Query.TypeOf, Some(c)), i)   => (i, q, c)
       case ((q: Query.BaseType, Some(c)), i) => (i, q, c)
     }
-    if (checks.isEmpty) return Map.empty
-    val (aliasOf, synthetic) = aliased(checks.flatMap { case (_, q, c) => operands(q) :+ c })
-    val encoded = "N" +: checks.map {
-      case (_, Query.TypeOf(a), c)      => s"TE\t${aliasOf(a)}\t${aliasOf(c)}"
-      case (_, Query.BaseType(a, k), c) => s"BE\t${aliasOf(a)}\t${aliasOf(k)}\t${aliasOf(c)}"
-      case other                        => throw new IllegalStateException(other.toString)
+    def run(cs: Seq[(Int, Query, String)]): Seq[String] = {
+      val (aliasOf, synthetic) = aliased(cs.flatMap { case (_, q, c) => operands(q) :+ c })
+      val encoded = "N" +: cs.map {
+        case (_, Query.TypeOf(a), c)      => s"TE\t${aliasOf(a)}\t${aliasOf(c)}"
+        case (_, Query.BaseType(a, k), c) => s"BE\t${aliasOf(a)}\t${aliasOf(k)}\t${aliasOf(c)}"
+        case other                        => throw new IllegalStateException(other.toString)
+      }
+      CompletableFuture.supplyAsync(() =>
+        TcOracle.get(version, req.env.classpath, scalacOptions).run(req.files ++ synthetic, encoded).answers, oracleThread).get()
     }
-    val answers = CompletableFuture.supplyAsync(() =>
-      TcOracle.get(version, req.env.classpath, scalacOptions).run(req.files ++ synthetic, encoded).answers, oracleThread).get()
-    if (answers.size != checks.size) Map.empty else checks.map(_._1).zip(answers).toMap
+    if (checks.isEmpty) return Map.empty
+    // a text that doesn't parse (e.g. Scala 3 syntax in a Scala 2 program) stops the whole run: then one run per check
+    val together = run(checks)
+    val answers =
+      if (together.size == checks.size && !together.exists(_.startsWith("exc not typed"))) together
+      else checks.flatMap(c => run(Seq(c)).headOption.orElse(Some("exc")))
+    checks.map(_._1).zip(answers).toMap
   }
 
   /** Printed types differ between the engines in package prefixes and spacing. */
