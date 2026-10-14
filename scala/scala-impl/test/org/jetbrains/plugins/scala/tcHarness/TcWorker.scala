@@ -8,7 +8,7 @@ import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.pom.java.LanguageLevel
 import com.intellij.psi.{PsiClass, PsiDocumentManager, PsiElement, PsiFile}
-import com.intellij.testFramework.{IdeaTestUtil, LoggedErrorProcessor}
+import com.intellij.testFramework.{IdeaTestUtil, IndexingTestUtil, LoggedErrorProcessor}
 import com.intellij.util.ThrowableRunnable
 import com.intellij.util.lang.JavaVersion
 import org.jetbrains.plugins.scala.ScalaVersion
@@ -60,6 +60,9 @@ class TcWorker(val env: Env, generation: Int = 0) extends ScalaLightCodeInsightF
     val sourceRoot = ModuleRootManager.getInstance(getModule).getSourceRoots.head
     WriteAction.run[Throwable](() => sourceRoot.getChildren.foreach(_.delete(this)))
     val psiFiles = req.files.map(f => myFixture.addFileToProject(f.path, f.text))
+    // after a new environment the libraries may still be indexing: highlighting in dumb mode
+    // doesn't report unresolved references (seen: exports resolving only on the first request)
+    IndexingTestUtil.waitUntilIndexesAreReady(getProject)
 
     val logged = mutable.ArrayBuffer.empty[String]
     val diagnostics = mutable.ArrayBuffer.empty[Diagnostic]
