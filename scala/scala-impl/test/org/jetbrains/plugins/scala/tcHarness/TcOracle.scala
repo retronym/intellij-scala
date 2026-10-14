@@ -22,8 +22,8 @@ final class TcOracle private (impl: java.util.function.Function[Array[String], A
 
   final case class Result(diagnostics: Seq[Diagnostic], answers: Seq[String], crash: Option[String])
 
-  def run(files: Seq[SourceFile], queries: Seq[String]): Result = synchronized {
-    val in = (files.size.toString +: files.flatMap(f => Seq(f.path, f.text))) ++ queries
+  def run(files: Seq[SourceFile], queries: Seq[String], extraClasspath: String = ""): Result = synchronized {
+    val in = (extraClasspath +: files.size.toString +: files.flatMap(f => Seq(f.path, f.text))) ++ queries
     val out = impl.apply(in.toArray).toSeq.map(_.split("\t", -1).toSeq)
     Result(
       diagnostics = out.collect { case Seq("D", sev, path, line, col, msg*) => Diagnostic(path, line.toInt, col.toInt, sev, msg.mkString("\t")) },
@@ -34,6 +34,26 @@ final class TcOracle private (impl: java.util.function.Function[Array[String], A
 }
 
 object TcOracle {
+
+  /**
+   * In a build, Java sources are compiled by javac and scalac reads their class files; scalac's
+   * own reading of Java sources is weaker (e.g. `E extends Comparable<? super E>` is "an illegal
+   * cyclic reference"). So the request's Java files are compiled with javac when they compile on
+   * their own: the Scala files and the output directory, else (Java referring to Scala) all files.
+   */
+  def withJavac(files: Seq[SourceFile], classpath: Seq[String], jdk: String): (Seq[SourceFile], Option[Path]) = {
+    val javaFiles = files.filter(_.path.endsWith(".java"))
+    val compiler = javax.tools.ToolProvider.getSystemJavaCompiler
+    if (javaFiles.isEmpty || compiler == null) return (files, None)
+    val src = Files.createTempDirectory("tc-java-src")
+    val out = Files.createTempDirectory("tc-java-out")
+    val paths = javaFiles.map { f => val p = src.resolve(f.path); Files.createDirectories(p.getParent); Files.writeString(p, f.text) }
+    val release = if (jdk == "mock") Nil else Seq("--release", jdk)
+    val args = release ++ Seq("-proc:none", "-nowarn", "-d", out.toString) ++
+      (if (classpath.isEmpty) Nil else Seq("-cp", classpath.mkString(File.pathSeparator))) ++ paths.map(_.toString)
+    val ok = compiler.run(null, java.io.OutputStream.nullOutputStream(), java.io.OutputStream.nullOutputStream(), args*) == 0
+    if (ok) (files.filterNot(_.path.endsWith(".java")), Some(out)) else (files, None)
+  }
 
   private val oracles = mutable.Map.empty[(ScalaVersion, Seq[String], Seq[String]), TcOracle]
 

@@ -90,7 +90,8 @@ class TcServerTest extends TestCase {
     val oracle: Option[CompletableFuture[(TcOracle#Result, Long)]] = Option.when(req.oracle)(CompletableFuture.supplyAsync(() => {
       val o = TcOracle.get(version, req.env.classpath, scalacOptions)
       val t0 = System.nanoTime()
-      val r = o.run(req.files, req.queries.map(_.encode))
+      val (files, javaOut) = TcOracle.withJavac(req.files, req.env.classpath, req.env.jdk)
+      val r = o.run(files, req.queries.map(_.encode), javaOut.fold("")(_.toString))
       (r, (System.nanoTime() - t0) / 1000000)
     }, oracleThread))
 
@@ -193,7 +194,10 @@ class TcServerTest extends TestCase {
         case other                        => throw new IllegalStateException(other.toString)
       }
       CompletableFuture.supplyAsync(() =>
-        TcOracle.get(version, req.env.classpath, scalacOptions).run(req.files ++ synthetic, encoded).answers, oracleThread).get()
+      {
+        val (files, javaOut) = TcOracle.withJavac(req.files, req.env.classpath, req.env.jdk)
+        TcOracle.get(version, req.env.classpath, scalacOptions).run(files ++ synthetic, encoded, javaOut.fold("")(_.toString)).answers
+      }, oracleThread).get()
     }
     if (checks.isEmpty) return Map.empty
     // a text that doesn't parse (e.g. Scala 3 syntax in a Scala 2 program) stops the whole run: then one run per check

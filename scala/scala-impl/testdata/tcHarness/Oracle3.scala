@@ -24,7 +24,7 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
   private final class Driver extends dotc.Driver {
     override protected def sourcesRequired: Boolean = false
     val rootContext: Context = {
-      val args = Array("-classpath", classpath, "-Ystop-after:refchecks", "-color:never") ++ options
+      val args = Array("-classpath", requestClasspath, "-Ystop-after:refchecks", "-color:never") ++ options
       setup(args, initCtx.fresh) match {
         case Some((_, ctx)) => ctx
         case None           => throw new IllegalArgumentException("bad scalacOptions: " + options.mkString(" "))
@@ -35,10 +35,14 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
 
   private def clean(s: String) = String.valueOf(s).replace('\t', ' ').replace('\n', ' ')
 
+  // the request's own extra classpath (e.g. its Java sources compiled by javac); one request at a time
+  private var requestClasspath = classpath
+
   def apply(in: Array[String]): Array[String] = {
-    val n = in(0).toInt
-    val sources = (0 until n).map(i => (in(1 + 2 * i), in(2 + 2 * i)))
-    val queries = in.drop(1 + 2 * n)
+    requestClasspath = if (in(0).isEmpty) classpath else classpath + java.io.File.pathSeparator + in(0)
+    val n = in(1).toInt
+    val sources = (0 until n).map(i => (in(2 + 2 * i), in(3 + 2 * i)))
+    val queries = in.drop(2 + 2 * n)
     try answer(sources, queries)
     catch { case t: Throwable => Array("X\t" + clean(t.toString)) }
   }

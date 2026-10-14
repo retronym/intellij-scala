@@ -68,6 +68,7 @@ def make_parser():
     ap.add_argument("--no-oracle", action="store_true")
     ap.add_argument("--warnings", action="store_true")
     ap.add_argument("--json", action="store_true", help="print raw responses")
+    ap.add_argument("--with", dest="with_", action="append", default=[], help="extra file sent along (with --each or //> tc: relative to the probe)")
     ap.add_argument("--each", action="store_true", help="one request per file (directories: their *.scala)")
     ap.add_argument("-v", "--verbose", action="store_true", help="with --each: full report for files that disagree")
     ap.add_argument("--health", action="store_true")
@@ -179,7 +180,9 @@ def main():
         for p in paths:
             text = open(p).read()
             fa = ap.parse_args(sys.argv[1:] + file_options(text))
-            resps = run(servers, request(fa, [{"path": os.path.basename(p), "text": text}]))
+            extra = [os.path.join(os.path.dirname(p), w) for w in fa.with_ if w not in a.with_] + a.with_
+            files = [{"path": os.path.basename(p), "text": text}] + [{"path": os.path.basename(w), "text": open(w).read()} for w in extra]
+            resps = run(servers, request(fa, files))
             line = "  ".join(f"{n}={summary(r)}" for (n, _), r in zip(servers, resps))
             ok = all(summary(r) == "ok" for r in resps)
             bad += not ok
@@ -192,11 +195,13 @@ def main():
         print(f"{bad}/{len(paths)} disagree")
         sys.exit(1 if bad else 0)
 
-    files = [{"path": os.path.basename(f), "text": open(f).read()} for f in a.files]
+    files = [{"path": os.path.basename(f), "text": open(f).read()} for f in a.files + a.with_]
+    files += [{"path": os.path.basename(w), "text": open(os.path.join(os.path.dirname(f), w)).read()}
+              for f in a.files for w in ap.parse_args(file_options(open(f).read())).with_]
     files += [{"path": f"Snippet{i}.scala", "text": t} for i, t in enumerate(a.expr)]
     if not files:
         ap.error("no files")
-    a = ap.parse_args(sys.argv[1:] + [o for f in files for o in file_options(f["text"])])
+    a = ap.parse_args(sys.argv[1:] + [o for f in files for o in file_options(f["text"]) if not o.startswith("--with")])
     resps = run(servers, request(a, files))
     if a.json:
         print(json.dumps(dict(zip([n for n, _ in servers], resps)), indent=2))
