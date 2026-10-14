@@ -185,11 +185,13 @@ object Classify {
       "same-named-type-members",
       "Two type members of the same name meet in a composition (mixins, a self type, or a compound with a refinement) " +
         "and the plugin picks a different one than scalac. `T0 { type M }`, `T1 extends T0`, `T2 { type M = Any }`, " +
-        "`K extends T1 with T2`: the plugin had K#M =:= Any but also K#M <: T1#M and k.M <: T1#M. Inside " +
+        "`K extends T1 with T2`: the plugin had K#M =:= Any but also K#M <: T1#M, which scalac rejects (through a class " +
+        "prefix its asSeenFrom expands the alias to Any). k.M <: T1#M does hold in scalac (name-based projection rule, " +
+        "stable prefix); an oracle that dealiased the query fully had said otherwise. Inside " +
         "`trait T2 { self: T1 => type M4 = Nothing }` with `T1 { type M4 = Any }`, scalac's this.M4 is T1's (Any), the " +
         "plugin's T2's. `(Any { type M4 = k1.M4 }) with K1 <: Any { type M4 = k1.M4 }` holds in the plugin; in scalac " +
         "K1's M4 (seen from the compound's this) wins. (The mixin case K#M <: T1#M, from the name-only arm of " +
-        "ScalaConformance's projection visitor, is fixed: an alias member no longer takes that arm.) Incomplete too: `trait T2 extends T1 { self: T3 => type M5 = this.M1 }` " +
+        "ScalaConformance's projection visitor, is fixed: an alias member takes that arm only through a stable prefix.) Incomplete too: `trait T2 extends T1 { self: T3 => type M5 = this.M1 }` " +
         "with M1 abstract in T0 and `= Nothing` in T3: scalac has v19.M5 <: Nothing for `v19: T2`, the plugin doesn't. " +
         "Cause not located yet.",
       f => Set("conforms", "equiv")(f.check) && {
