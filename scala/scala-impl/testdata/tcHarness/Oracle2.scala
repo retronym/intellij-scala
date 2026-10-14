@@ -10,7 +10,7 @@ import scala.tools.nsc.{Global, Settings}
  * scalac it runs on and called through `java.util.function.Function`, so no scalac type crosses
  * the classloader boundary.
  *
- * Input: `n, path_1, text_1, ..., path_n, text_n, query*`. Output lines, tab-separated:
+ * Input: `extraClasspath, n, path_1, text_1, ..., path_n, text_n, query*`. Output lines, tab-separated:
  *  - `D severity path line col message` per diagnostic (1-based positions; line 0 = no position)
  *  - `A answer` per query, in order (also when there are errors)
  *  - `X message` if the compiler crashed
@@ -26,7 +26,7 @@ class Oracle2(classpath: String, options: Array[String]) extends java.util.funct
   // that redefine the same classes. Jar indexes are cached across Globals by scalac.
   private def newGlobal(): Global = {
     val settings = new Settings(msg => throw new IllegalArgumentException(msg))
-    settings.classpath.value = classpath
+    settings.classpath.value = requestClasspath
     settings.stopAfter.value = List("refchecks")
     settings.outputDirs.setSingleOutput(new VirtualDirectory("(memory)", None))
     val (ok, rest) = settings.processArguments(options.toList, processAll = true)
@@ -36,10 +36,14 @@ class Oracle2(classpath: String, options: Array[String]) extends java.util.funct
 
   private def clean(s: String) = String.valueOf(s).replace('\t', ' ').replace('\n', ' ')
 
+  // the request's own extra classpath (e.g. its Java sources compiled by javac); one request at a time
+  private var requestClasspath = classpath
+
   def apply(in: Array[String]): Array[String] = {
-    val n = in(0).toInt
-    val sources = (0 until n).map(i => (in(1 + 2 * i), in(2 + 2 * i)))
-    val queries = in.drop(1 + 2 * n)
+    requestClasspath = if (in(0).isEmpty) classpath else classpath + java.io.File.pathSeparator + in(0)
+    val n = in(1).toInt
+    val sources = (0 until n).map(i => (in(2 + 2 * i), in(3 + 2 * i)))
+    val queries = in.drop(2 + 2 * n)
     try answer(sources, queries)
     catch { case t: Throwable => Array("X\t" + clean(t.toString)) }
   }
