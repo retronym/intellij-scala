@@ -1,0 +1,99 @@
+package tcoracle
+
+import dotty.tools.dotc
+import dotc.ast.tpd
+import dotc.ast.tpd.TreeOps
+import dotc.core.Contexts.*
+import dotc.core.Symbols.*
+import dotc.core.Types.*
+import dotc.core.Flags
+import dotc.reporting.StoreReporter
+import dotc.util.SourceFile
+
+import scala.collection.mutable
+
+/**
+ * The Scala 3 side of the type-checking harness (`TcOracle`); the protocol is `Oracle2`'s.
+ * One compiler (and so one `ContextBase` with its loaded classpath) is kept for all requests;
+ * each request is a new `Run`, as in the REPL and the presentation compiler.
+ */
+class Oracle3(classpath: String, options: Array[String]) extends java.util.function.Function[Array[String], Array[String]] {
+
+  private object driver extends dotc.Driver {
+    override protected def sourcesRequired: Boolean = false
+    lazy val rootContext: Context = {
+      val args = Array("-classpath", classpath, "-Ystop-after:typer", "-color:never") ++ options
+      setup(args, initCtx.fresh) match {
+        case Some((_, ctx)) => ctx
+        case None           => throw new IllegalArgumentException("bad scalacOptions: " + options.mkString(" "))
+      }
+    }
+    lazy val compiler: dotc.Compiler = newCompiler(using rootContext)
+  }
+
+  private def clean(s: String) = String.valueOf(s).replace('\t', ' ').replace('\n', ' ')
+
+  def apply(in: Array[String]): Array[String] = {
+    val n = in(0).toInt
+    val sources = (0 until n).map(i => (in(1 + 2 * i), in(2 + 2 * i)))
+    val queries = in.drop(1 + 2 * n)
+    try answer(sources, queries)
+    catch { case t: Throwable => Array("X\t" + clean(t.toString)) }
+  }
+
+  private def answer(sources: Seq[(String, String)], queries: Array[String]): Array[String] = {
+    val reporter = new StoreReporter(null)
+    given ctx0: Context = driver.rootContext.fresh.setReporter(reporter)
+    val run = driver.compiler.newRun
+    run.compileSources(sources.map { case (p, t) => SourceFile.virtual(p, t) }.toList)
+    val all = reporter.removeBufferedMessages
+    val diags = all.filter(d => d.level >= dotc.interfaces.Diagnostic.WARNING).map { d =>
+      val sev = if (d.level == dotc.interfaces.Diagnostic.ERROR) "error" else "warning"
+      val (path, line, col) = if (d.pos.exists) (d.pos.source.path, d.pos.line + 1, d.pos.column + 1) else ("", 0, 0)
+      s"D\t$sev\t$path\t$line\t$col\t${clean(d.message)}"
+    }
+    (diags ++ answerQueries(run, queries)(using run.runContext.withPhase(run.runContext.base.typerPhase))).toArray
+  }
+
+  private def answerQueries(run: dotc.Run, queries: Array[String])(using Context): Seq[String] = {
+    val aliases = mutable.LinkedHashMap[String, Symbol]()
+    val terms = mutable.LinkedHashMap[String, Symbol]()
+    val classes = mutable.LinkedHashMap[String, Symbol]()
+    for (unit <- run.units) unit.tpdTree.foreachSubTree {
+      case td: tpd.TypeDef if td.symbol.isAliasType => aliases.getOrElseUpdate(td.name.toString.stripPrefix("__q_"), td.symbol)
+      case td: tpd.TypeDef if td.symbol.isClass && !td.symbol.is(Flags.Module) => classes.getOrElseUpdate(td.name.toString, td.symbol)
+      case vd: tpd.ValOrDefDef if !vd.symbol.is(Flags.Synthetic) && !vd.symbol.is(Flags.Param) && !vd.symbol.isConstructor =>
+        terms.getOrElseUpdate(vd.name.toString, vd.symbol)
+      case _ =>
+    }
+
+    def tpe(id: String): Type = {
+      val alts = id.split('\u001f')
+      alts.iterator.map(tpe1).collectFirst { case Some(t) => t }.getOrElse(throw new NoSuchElementException(s"unresolved ${alts.head}"))
+    }
+    def tpe1(id: String): Option[Type] =
+      aliases.get(id).map(_.typeRef.dealias).filterNot(_.isError)
+        .orElse(terms.get(id).map(_.info.finalResultType))
+    def cls(id: String): Symbol = id.split('\u001f').iterator
+      .map(a => classes.get(a).orElse(aliases.get(a).map(_.info.hiBound match {
+        case l: HKTypeLambda => l.resType.classSymbol
+        case t               => t.classSymbol
+      })).orElse(tpe1(a).map(_.classSymbol)))
+      .collectFirst { case Some(s) => s }
+      .getOrElse(throw new NoSuchElementException(s"unresolved class ${id.split('\u001f').head}"))
+
+    val answers = queries.map { q =>
+      val a = try q.split('\t') match {
+        case Array("C", a, b) => (tpe(a) <:< tpe(b)).toString
+        case Array("E", a, b) => (tpe(a) =:= tpe(b)).toString
+        case Array("B", a, c) =>
+          val bt = tpe(a).baseType(cls(c))
+          if (!bt.exists) "none" else bt.show
+        case Array("T", a) => tpe(a).show
+        case other => "exc bad query " + other.mkString(" ")
+      } catch { case t: Throwable => "exc " + t }
+      "A\t" + clean(a)
+    }
+    answers.toSeq
+  }
+}
