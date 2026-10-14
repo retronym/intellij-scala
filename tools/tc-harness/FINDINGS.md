@@ -4,7 +4,7 @@ From exploratory use of the harness. "tip" is #723 (1c19c913ec), "base" its base
 
 ## Regressions on the tip
 
-### A projection to an alias no longer conforms to the abstract member it implements (a80f7ae6c0)
+### A projection to an alias no longer conforms to the abstract member it implements (a80f7ae6c0) — fixed in 456d5e9919
 
 ```scala
 trait T0 { type M }; trait T1 extends T0; trait T2 { type M = Any }; trait K extends T1 with T2
