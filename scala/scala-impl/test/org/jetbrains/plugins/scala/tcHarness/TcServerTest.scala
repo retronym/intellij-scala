@@ -155,7 +155,9 @@ class TcServerTest extends TestCase {
     response
   }
 
-  private def normalize(answer: String): String = answer.replace("_root_.", "").replace(" ", "")
+  /** Printed types differ between the engines in package prefixes and spacing. */
+  private def normalize(answer: String): String =
+    answer.replace("_root_.", "").replaceAll("\\b(?:scala|java)(?:\\.[a-z]\\w*)*\\.(?=[A-Z])", "").replace(" ", "")
 
   private def envJson(e: Env): JsonObject = obj("scalaVersion" -> str(e.scalaVersion), "jdk" -> str(e.jdk),
     "classpath" -> arr(e.classpath.map(str)), "scalacOptions" -> arr(e.scalacOptions.map(str)))
