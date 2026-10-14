@@ -15,7 +15,10 @@ import scala.tools.nsc.{Global, Settings}
  *  - `A answer` per query, in order (also when there are errors)
  *  - `X message` if the compiler crashed
  *
- * Runs through refchecks (variance, overriding). Queries: `C a b` (a <:< b), `E a b` (a =:= b), `B a cls` (baseType), `T a` (the type).
+ * A first query `N` skips the run for diagnostics.
+ *
+ * Runs through refchecks (variance, overriding). Queries: `C a b` (a <:< b), `E a b` (a =:= b), `B a cls` (baseType), `T a` (the type),
+ * `TE a t` (the type of `a` =:= t), `BE a cls t` (the base type =:= t).
  */
 class Oracle2(classpath: String, options: Array[String]) extends java.util.function.Function[Array[String], Array[String]] {
 
@@ -46,6 +49,7 @@ class Oracle2(classpath: String, options: Array[String]) extends java.util.funct
   private def answer(sources: Seq[(String, String)], queries: Array[String]): Array[String] = {
     val user = sources.filterNot(_._1.startsWith("__tc_"))
     if (queries.isEmpty) compile(user, Array.empty)
+    else if (queries.head == "N") compile(sources, queries.tail).filter(_.startsWith("A\t"))
     else compile(user, Array.empty) ++ compile(sources, queries).filter(_.startsWith("A\t"))
   }
 
@@ -126,6 +130,11 @@ class Oracle2(classpath: String, options: Array[String]) extends java.util.funct
         case Array("B", a, c) =>
           val bt = tpe(a).baseType(cls(c))
           if (bt == NoType) "none" else bt.toString
+        // is our answer the same type as the given one (another engine's, as an operand)?
+        case Array("TE", a, c) => (tpe(a) =:= tpe(c)).toString
+        case Array("BE", a, k, c) =>
+          val bt = tpe(a).baseType(cls(k))
+          if (bt == NoType) "none" else (bt =:= tpe(c)).toString
         case Array("T", a) => tpe(a).toString
         case other => "exc bad query " + other.mkString(" ")
       } catch { case t: Throwable => "exc " + t }

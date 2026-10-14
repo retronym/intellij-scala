@@ -47,6 +47,7 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
   private def answer(sources: Seq[(String, String)], queries: Array[String]): Array[String] = {
     val user = sources.filterNot(_._1.startsWith("__tc_"))
     if (queries.isEmpty) compile(user, Array.empty)
+    else if (queries.head == "N") compile(sources, queries.tail).filter(_.startsWith("A\t"))
     else compile(user, Array.empty) ++ compile(sources, queries).filter(_.startsWith("A\t"))
   }
 
@@ -103,6 +104,11 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
         case Array("B", a, c) =>
           val bt = tpe(a).baseType(cls(c))
           if (!bt.exists) "none" else bt.show
+        // is our answer the same type as the given one (another engine's, as an operand)?
+        case Array("TE", a, c) => (tpe(a) =:= tpe(c)).toString
+        case Array("BE", a, k, c) =>
+          val bt = tpe(a).baseType(cls(k))
+          if (!bt.exists) "none" else (bt =:= tpe(c)).toString
         case Array("T", a) => tpe(a).show
         case other => "exc bad query " + other.mkString(" ")
       } catch { case t: Throwable => "exc " + t }

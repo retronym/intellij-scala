@@ -134,7 +134,11 @@ def report(servers, resps):
         print("== queries")
         for i, q in enumerate(answered[0][1]["queries"]):
             ops = " ; ".join(q[k] for k in ("a", "b", "cls") if k in q)
-            cells = [f"{n}={r['queries'][i]['intellij']}" for n, r in answered]
+            def cell(n, rq):
+                same = rq.get("scalacSameType")
+                mark = "" if same is None else " ≡" if same == "true" else " ≢" if same == "false" else " ?"
+                return f"{n}={rq['intellij']}{mark}"
+            cells = [cell(n, r["queries"][i]) for n, r in answered]
             sc = q.get("scalac")
             marks = "".join("" if r["queries"][i].get("agree", True) else "≠" for _, r in answered)
             print(f"  {marks or ' ':2} {q['kind']} {ops}: " + "  ".join(cells) + (f"  scalac={sc}" if sc is not None else ""))
@@ -180,6 +184,9 @@ def main():
             ok = all(summary(r) == "ok" for r in resps)
             bad += not ok
             print(f"{'  ' if ok else '✗ '}{p}: {line}", flush=True)
+            for (n, _), r in zip(servers, resps):
+                if "error" in r:
+                    print(f"    {n}: {r['error'].strip().splitlines()[0][:300]}")
             if a.verbose and not ok:
                 report(servers, resps)
         print(f"{bad}/{len(paths)} disagree")

@@ -62,7 +62,10 @@ class TcServerTest extends TestCase {
         case Shutdown => running = false
         case Check(body, result) =>
           try result.complete(render(handle(parseRequest(body))))
-          catch { case e: Throwable => result.completeExceptionally(e) }
+          catch { case e: Throwable =>
+            println(s"TC-HARNESS request failed: ${stackTrace(e).linesIterator.take(8).mkString("\n  ")}")
+            result.completeExceptionally(e)
+          }
       }
     } finally {
       server.stop(0)
@@ -73,23 +76,13 @@ class TcServerTest extends TestCase {
   }
 
   private def handle(req0: Request): JsonObject = {
-    // Each query operand also gets an alias in a synthetic file, so that an operand may be a type
-    // expression (`List[Int]`, `Main.o.T`) as well as the name of a definition in the sources.
-    val operands = req0.queries.flatMap {
-      case Query.Conforms(a, b) => Seq(a, b)
-      case Query.Equiv(a, b)    => Seq(a, b)
-      case Query.BaseType(a, c) => Seq(a, c)
-      case Query.TypeOf(a)      => Seq(a)
-    }.distinct
-    val aliasOf = operands.zipWithIndex.map { case (op, i) => op -> s"$op\u001f__tc$i" }.toMap
+    val (aliasOf, synthetic) = aliased(req0.queries.flatMap(operands))
     val queries = req0.queries.map {
       case Query.Conforms(a, b) => Query.Conforms(aliasOf(a), aliasOf(b))
       case Query.Equiv(a, b)    => Query.Equiv(aliasOf(a), aliasOf(b))
       case Query.BaseType(a, c) => Query.BaseType(aliasOf(a), aliasOf(c))
       case Query.TypeOf(a)      => Query.TypeOf(aliasOf(a))
     }
-    val synthetic = Option.when(operands.nonEmpty)(SourceFile(s"${TcWorker.SyntheticPrefix}queries.scala",
-      operands.zipWithIndex.map { case (op, i) => s"  type __q___tc$i = $op" }.mkString("object __tc {\n", "\n", "\n}\n")))
     val req = req0.copy(files = req0.files ++ synthetic, queries = queries)
     def user(ds: Seq[Diagnostic]) = ds.filterNot(_.file.startsWith(TcWorker.SyntheticPrefix))
     val version = TcWorker.parseVersion(req.env.scalaVersion)
@@ -116,10 +109,10 @@ class TcServerTest extends TestCase {
     }
 
     val t0 = System.nanoTime()
-    var ij: (Seq[Diagnostic], Seq[String], Seq[String]) = null
+    var ij: TcWorker.Result = null
     EdtTestUtil.runInEdtAndWait((() => ij = worker.check(req)): ThrowableRunnable[Throwable])
     val ijMs = (System.nanoTime() - t0) / 1000000
-    val (ijDiags, ijAnswers, logged) = ij
+    val TcWorker.Result(ijDiags, ijAnswers, ijCanonical, logged) = ij
 
     val response = obj(
       "server" -> obj("label" -> str(label), "commit" -> str(commit)),
@@ -142,17 +135,66 @@ class TcServerTest extends TestCase {
     }
     if (req.queries.nonEmpty) {
       val scAnswers = scalac.map(_._1.answers).filter(_.size == req.queries.size)
+      val sameType = if (scAnswers.isEmpty) Map.empty[Int, String] else typeChecks(req0, ijCanonical, version, scalacOptions)
       response.add("queries", arr(req0.queries.zipWithIndex.map { case (q, i) =>
         val o = q.toJson
         o.add("intellij", str(ijAnswers(i)))
         scAnswers.foreach { sc =>
           o.add("scalac", str(sc(i)))
-          o.add("agree", bool(normalize(ijAnswers(i)) == normalize(sc(i))))
+          sameType.get(i).foreach(e => o.add("scalacSameType", str(e)))
+          val agree = sameType.get(i) match {
+            case Some("true")  => true
+            case Some("false") => false
+            case _             => normalize(ijAnswers(i)) == normalize(sc(i))
+          }
+          o.add("agree", bool(agree))
         }
         o
       }))
     }
     response
+  }
+
+  private def operands(q: Query): Seq[String] = q match {
+    case Query.Conforms(a, b) => Seq(a, b)
+    case Query.Equiv(a, b)    => Seq(a, b)
+    case Query.BaseType(a, c) => Seq(a, c)
+    case Query.TypeOf(a)      => Seq(a)
+  }
+
+  /**
+   * Each operand also gets an alias in a synthetic file, so that an operand may be a type
+   * expression (`List[Int]`, `Main.o.T`) as well as the name of a definition in the sources.
+   */
+  private def aliased(ops: Seq[String]): (Map[String, String], Option[SourceFile]) = {
+    val distinct = ops.distinct
+    val aliasOf = distinct.zipWithIndex.map { case (op, i) => op -> s"$op\u001f__tc$i" }.toMap
+    val synthetic = Option.when(distinct.nonEmpty)(SourceFile(s"${TcWorker.SyntheticPrefix}queries.scala",
+      distinct.zipWithIndex.map { case (op, i) => s"  type __q___tc$i = $op" }.mkString("object __tc {\n", "\n", "\n}\n")))
+    (aliasOf, synthetic)
+  }
+
+  /**
+   * Printed types differ between the engines, so for `type` and `baseType` answers scalac also
+   * checks its own type against IntelliJ's (canonical text, as a type expression): `true`, `false`,
+   * or `exc ...` when that text doesn't type there (a this-type, a local).
+   */
+  private def typeChecks(req: Request, canonical: Seq[Option[String]], version: org.jetbrains.plugins.scala.ScalaVersion,
+                         scalacOptions: Seq[String]): Map[Int, String] = {
+    val checks = req.queries.zip(canonical).zipWithIndex.collect {
+      case ((q: Query.TypeOf, Some(c)), i)   => (i, q, c)
+      case ((q: Query.BaseType, Some(c)), i) => (i, q, c)
+    }
+    if (checks.isEmpty) return Map.empty
+    val (aliasOf, synthetic) = aliased(checks.flatMap { case (_, q, c) => operands(q) :+ c })
+    val encoded = "N" +: checks.map {
+      case (_, Query.TypeOf(a), c)      => s"TE\t${aliasOf(a)}\t${aliasOf(c)}"
+      case (_, Query.BaseType(a, k), c) => s"BE\t${aliasOf(a)}\t${aliasOf(k)}\t${aliasOf(c)}"
+      case other                        => throw new IllegalStateException(other.toString)
+    }
+    val answers = CompletableFuture.supplyAsync(() =>
+      TcOracle.get(version, req.env.classpath, scalacOptions).run(req.files ++ synthetic, encoded).answers, oracleThread).get()
+    if (answers.size != checks.size) Map.empty else checks.map(_._1).zip(answers).toMap
   }
 
   /** Printed types differ between the engines in package prefixes and spacing. */

@@ -14,9 +14,10 @@ import com.intellij.util.lang.JavaVersion
 import org.jetbrains.plugins.scala.ScalaVersion
 import org.jetbrains.plugins.scala.base.libraryLoaders.{LibraryLoader, LocalJarLibraryLoader, SmartJDKLoader}
 import org.jetbrains.plugins.scala.base.{ScalaLightCodeInsightFixtureTestCase, SharedTestProjectToken}
-import org.jetbrains.plugins.scala.extensions.PsiElementExt
+import org.jetbrains.plugins.scala.extensions.{ObjectExt, PsiElementExt}
 import org.jetbrains.plugins.scala.lang.psi.api.statements.params.ScParameter
-import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScFunction, ScTypeAliasDefinition}
+import org.jetbrains.plugins.scala.lang.psi.api.base.patterns.ScBindingPattern
+import org.jetbrains.plugins.scala.lang.psi.api.statements.{ScFunction, ScTypeAliasDefinition, ScValueOrVariable}
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.ScTypedDefinition
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScObject
 import org.jetbrains.plugins.scala.lang.psi.types.{BaseTypes, Context, ScType, ScTypeExt, TypePresentationContext}
@@ -55,7 +56,7 @@ class TcWorker(val env: Env) extends ScalaLightCodeInsightFixtureTestCase {
   override protected def sharedProjectToken: SharedTestProjectToken = SharedTestProjectToken(("tc-harness", env))
 
   /** Must run on the EDT. */
-  def check(req: Request): (Seq[Diagnostic], Seq[String], Seq[String]) = {
+  def check(req: Request): TcWorker.Result = {
     val sourceRoot = ModuleRootManager.getInstance(getModule).getSourceRoots.head
     WriteAction.run[Throwable](() => sourceRoot.getChildren.foreach(_.delete(this)))
     val psiFiles = req.files.map(f => myFixture.addFileToProject(f.path, f.text))
@@ -84,7 +85,7 @@ class TcWorker(val env: Env) extends ScalaLightCodeInsightFixtureTestCase {
         }
     }
     val answers = if (req.queries.isEmpty) Nil else new Queries(psiFiles).answer(req.queries)
-    (diagnostics.toSeq, answers, logged.toSeq)
+    TcWorker.Result(diagnostics.toSeq, answers.map(_._1), answers.map(_._2), logged.toSeq)
   }
 
   /** The plugin's answers to the queries; see [[TcProtocol.Query]] for how operands resolve. */
@@ -98,6 +99,8 @@ class TcWorker(val env: Env) extends ScalaLightCodeInsightFixtureTestCase {
       case f: ScFunction if f.isConstructor =>
       case o: ScObject               => terms.getOrElseUpdate(o.name, o)
       case c: PsiClass               => classes.getOrElseUpdate(c.getName, c)
+      // as scalac's side: vals/vars and defs, not bindings in case clauses, generators or lambdas
+      case b: ScBindingPattern if !b.nameContext.is[ScValueOrVariable] =>
       case t: ScTypedDefinition      => terms.getOrElseUpdate(t.name, t)
       case _                         =>
     })
@@ -124,21 +127,25 @@ class TcWorker(val env: Env) extends ScalaLightCodeInsightFixtureTestCase {
 
     private def show(t: ScType): String = t.presentableText(using TypePresentationContext.emptyContext, context)
 
-    def answer(queries: Seq[Query]): Seq[String] = queries.map { q =>
+    /** Each answer, and for a type answer its canonical text, for scalac to compare with its own. */
+    def answer(queries: Seq[Query]): Seq[(String, Option[String])] = queries.map { q =>
+      def typed(t: ScType) = (show(t), Some(t.canonicalText))
       try q match {
-        case Query.Conforms(a, b) => tpe(a).conforms(tpe(b)).toString
-        case Query.Equiv(a, b)    => tpe(a).equiv(tpe(b)).toString
-        case Query.BaseType(a, c) => TcWorker.baseType(tpe(a), cls(c)).fold("none")(show)
-        case Query.TypeOf(a)      => show(tpe(a))
+        case Query.Conforms(a, b) => (tpe(a).conforms(tpe(b)).toString, None)
+        case Query.Equiv(a, b)    => (tpe(a).equiv(tpe(b)).toString, None)
+        case Query.BaseType(a, c) => TcWorker.baseType(tpe(a), cls(c)).fold(("none", Option.empty[String]))(typed)
+        case Query.TypeOf(a)      => typed(tpe(a))
       } catch {
         case e: ProcessCanceledException => throw e
-        case e: Throwable                => "exc " + String.valueOf(e).replace('\n', ' ')
+        case e: Throwable                => ("exc " + String.valueOf(e).replace('\n', ' '), None)
       }
     }
   }
 }
 
 object TcWorker {
+  final case class Result(diagnostics: Seq[Diagnostic], answers: Seq[String], canonical: Seq[Option[String]], logged: Seq[String])
+
   /** Files the server adds (the aliases standing for query operands); not highlighted, not diffed. */
   val SyntheticPrefix = "__tc_"
 
