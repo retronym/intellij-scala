@@ -79,7 +79,11 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
       alts.iterator.map(tpe1).collectFirst { case Some(t) => t }.getOrElse(throw new NoSuchElementException(s"unresolved ${alts.head}"))
     }
     def tpe1(id: String): Option[Type] =
-      aliases.get(id).map(_.typeRef.dealias).filterNot(_.isError)
+      // one step, as in Oracle2: the right-hand side as written
+      aliases.get(id).map(sym => sym.info match {
+        case TypeAlias(alias) => alias
+        case _                => sym.typeRef
+      }).filterNot(_.isError)
         .orElse(terms.get(id).map(_.info.finalResultType))
     def cls(id: String): Symbol = id.split('\u001f').iterator
       .map(a => classes.get(a).orElse(aliases.get(a).map(_.info.hiBound match {

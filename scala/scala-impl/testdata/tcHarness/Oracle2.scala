@@ -96,7 +96,9 @@ class Oracle2(classpath: String, options: Array[String]) extends java.util.funct
       alts.iterator.map(tpe1).collectFirst { case Some(t) => t }.getOrElse(throw new NoSuchElementException(s"unresolved ${alts.head}"))
     }
     def tpe1(id: String): Option[Type] =
-      aliases.get(id).map(sym => typeRef(sym.owner.thisType, sym, Nil).dealias).filterNot(_.isErroneous)
+      // one step: the alias's right-hand side as written (dealias would expand aliases in it too,
+      // e.g. `G1.Edge` to `(Int, Int)`, and change the answer)
+      aliases.get(id).map(sym => typeRef(sym.owner.thisType, sym, Nil).betaReduce).filterNot(_.isErroneous)
         .orElse(terms.get(id).map(_.info.finalResultType))
     // through aliases of type constructors (`type X = Seq`), which dealias does not expand
     def classOf(t: Type): Symbol = { val s = t.typeSymbolDirect; if (s.isAliasType) classOf(s.info.resultType) else t.typeSymbol }
