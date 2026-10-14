@@ -15,7 +15,7 @@ import scala.tools.nsc.{Global, Settings}
  *  - `A answer` per query, in order (also when there are errors)
  *  - `X message` if the compiler crashed
  *
- * Queries: `C a b` (a <:< b), `E a b` (a =:= b), `B a cls` (baseType), `T a` (the type).
+ * Runs through refchecks (variance, overriding). Queries: `C a b` (a <:< b), `E a b` (a =:= b), `B a cls` (baseType), `T a` (the type).
  */
 class Oracle2(classpath: String, options: Array[String]) extends java.util.function.Function[Array[String], Array[String]] {
 
@@ -24,7 +24,7 @@ class Oracle2(classpath: String, options: Array[String]) extends java.util.funct
   private def newGlobal(): Global = {
     val settings = new Settings(msg => throw new IllegalArgumentException(msg))
     settings.classpath.value = classpath
-    settings.stopAfter.value = List("typer")
+    settings.stopAfter.value = List("refchecks")
     settings.outputDirs.setSingleOutput(new VirtualDirectory("(memory)", None))
     val (ok, rest) = settings.processArguments(options.toList, processAll = true)
     if (!ok || rest.nonEmpty) throw new IllegalArgumentException("bad scalacOptions: " + options.mkString(" "))
@@ -41,18 +41,40 @@ class Oracle2(classpath: String, options: Array[String]) extends java.util.funct
     catch { case t: Throwable => Array("X\t" + clean(t.toString)) }
   }
 
+  // Files named `__tc_*` only hold the aliases of query operands; an error in them would stop the
+  // run before refchecks, so the diagnostics come from a run without them.
   private def answer(sources: Seq[(String, String)], queries: Array[String]): Array[String] = {
+    val user = sources.filterNot(_._1.startsWith("__tc_"))
+    if (queries.isEmpty) compile(user, Array.empty)
+    else compile(user, Array.empty) ++ compile(sources, queries).filter(_.startsWith("A\t"))
+  }
+
+  private def compile(sources: Seq[(String, String)], queries: Array[String]): Array[String] = {
     val g = newGlobal()
     import g._
     val reporter = g.reporter.asInstanceOf[StoreReporter]
-    val run = new Run
+
+    // The queries are answered when typer is done: a run that ends with errors resets the
+    // symbols of its sources (`compileUnitsInternal`), and later phases would not run at all.
+    var answers: Seq[String] = null
+    val run = new Run {
+      override def advancePhase(): Unit = {
+        if (answers == null && phase.name == "typer") answers = answerQueries(g)(this, queries)
+        super.advancePhase()
+      }
+    }
     run.compileSources(sources.map { case (p, t) => new BatchSourceFile(p, t) }.toList)
     val diags = reporter.infos.toList.filter(i => i.severity == reporter.ERROR || i.severity == reporter.WARNING).map { i =>
       val sev = if (i.severity == reporter.ERROR) "error" else "warning"
       val (path, line, col) = if (i.pos.isDefined) (i.pos.source.path, i.pos.line, i.pos.column) else ("", 0, 0)
       s"D\t$sev\t$path\t$line\t$col\t${clean(i.msg)}"
     }
+    if (answers == null) answers = queries.toSeq.map(_ => "A\texc not typed")
+    (diags ++ answers).toArray
+  }
 
+  private def answerQueries(g: Global)(run: g.Run, queries: Array[String]): Seq[String] = {
+    import g._
     val aliases = scala.collection.mutable.LinkedHashMap[String, Symbol]()
     val terms = scala.collection.mutable.LinkedHashMap[String, Symbol]()
     val classes = scala.collection.mutable.LinkedHashMap[String, Symbol]()
@@ -95,7 +117,7 @@ class Oracle2(classpath: String, options: Array[String]) extends java.util.funct
         .getOrElse(throw new NoSuchElementException(s"unresolved class ${alts.head}"))
     }
 
-    val answers = queries.map { q =>
+    queries.toSeq.map { q => exitingTyper {
       val a = try q.split('\t') match {
         case Array("C", a, b) => (tpe(a) <:< tpe(b)).toString
         case Array("E", a, b) => (tpe(a) =:= tpe(b)).toString
@@ -106,7 +128,6 @@ class Oracle2(classpath: String, options: Array[String]) extends java.util.funct
         case other => "exc bad query " + other.mkString(" ")
       } catch { case t: Throwable => "exc " + t }
       "A\t" + clean(a)
-    }
-    (diags ++ answers).toArray
+    }}
   }
 }

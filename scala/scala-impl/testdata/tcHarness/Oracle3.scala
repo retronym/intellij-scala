@@ -22,7 +22,7 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
   private object driver extends dotc.Driver {
     override protected def sourcesRequired: Boolean = false
     lazy val rootContext: Context = {
-      val args = Array("-classpath", classpath, "-Ystop-after:typer", "-color:never") ++ options
+      val args = Array("-classpath", classpath, "-Ystop-after:refchecks", "-color:never") ++ options
       setup(args, initCtx.fresh) match {
         case Some((_, ctx)) => ctx
         case None           => throw new IllegalArgumentException("bad scalacOptions: " + options.mkString(" "))
@@ -41,7 +41,14 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
     catch { case t: Throwable => Array("X\t" + clean(t.toString)) }
   }
 
+  // As in Oracle2: diagnostics from a run without the query aliases (`__tc_*` files).
   private def answer(sources: Seq[(String, String)], queries: Array[String]): Array[String] = {
+    val user = sources.filterNot(_._1.startsWith("__tc_"))
+    if (queries.isEmpty) compile(user, Array.empty)
+    else compile(user, Array.empty) ++ compile(sources, queries).filter(_.startsWith("A\t"))
+  }
+
+  private def compile(sources: Seq[(String, String)], queries: Array[String]): Array[String] = {
     val reporter = new StoreReporter(null)
     given ctx0: Context = driver.rootContext.fresh.setReporter(reporter)
     val run = driver.compiler.newRun
