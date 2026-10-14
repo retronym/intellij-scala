@@ -82,6 +82,7 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
       case _ =>
     }
 
+    def same(x: Type, y: Type): Boolean = x <:< y && y <:< x
     def tpe(id: String): Type = {
       val alts = id.split('\u001f')
       alts.iterator.map(tpe1).collectFirst { case Some(t) => t }.getOrElse(throw new NoSuchElementException(s"unresolved ${alts.head}"))
@@ -108,11 +109,12 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
         case Array("B", a, c) =>
           val bt = tpe(a).baseType(cls(c))
           if (!bt.exists) "none" else bt.show
-        // is our answer the same type as the given one (another engine's, as an operand)?
-        case Array("TE", a, c) => (tpe(a) =:= tpe(c)).toString
+        // is our answer the same type as the given one (another engine's, as an operand)? Mutual
+        // conformance, not =:=, which tells `M with Object { type T = Int }` from `M { type T = Int }`
+        case Array("TE", a, c) => same(tpe(a), tpe(c)).toString
         case Array("BE", a, k, c) =>
           val bt = tpe(a).baseType(cls(k))
-          if (!bt.exists) "none" else (bt =:= tpe(c)).toString
+          if (!bt.exists) "none" else same(bt, tpe(c)).toString
         case Array("T", a) => tpe(a).show
         case other => "exc bad query " + other.mkString(" ")
       } catch { case t: Throwable => "exc " + t }
