@@ -90,8 +90,9 @@ class Oracle2(classpath: String, options: Array[String]) extends java.util.funct
       t match {
         case td: TypeDef if td.symbol.isAliasType => aliases.getOrElseUpdate(td.name.toString.stripPrefix("__q_"), td.symbol)
         case cd: ClassDef                         => classes.getOrElseUpdate(cd.name.toString, cd.symbol)
-        case md: ModuleDef                        => terms.getOrElseUpdate(md.name.toString, md.symbol)
-        case vd: ValOrDefDef if !vd.symbol.isSynthetic && !vd.symbol.isParameter && vd.name != nme.CONSTRUCTOR =>
+        // as IntelliJ's side: written definitions only (no synthetic companions), no parameters or param accessors
+        case md: ModuleDef if !md.symbol.isSynthetic => terms.getOrElseUpdate(md.name.toString, md.symbol)
+        case vd: ValOrDefDef if !vd.symbol.isSynthetic && !vd.symbol.isParameter && !vd.symbol.isParamAccessor && vd.name != nme.CONSTRUCTOR =>
           terms.getOrElseUpdate(vd.name.dropLocal.toString, vd.symbol)
         case _ =>
       }

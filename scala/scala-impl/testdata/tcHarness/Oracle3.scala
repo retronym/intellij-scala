@@ -77,7 +77,7 @@ class Oracle3(classpath: String, options: Array[String]) extends java.util.funct
     for (unit <- run.units) unit.tpdTree.foreachSubTree {
       case td: tpd.TypeDef if td.symbol.isAliasType => aliases.getOrElseUpdate(td.name.toString.stripPrefix("__q_"), td.symbol)
       case td: tpd.TypeDef if td.symbol.isClass && !td.symbol.is(Flags.Module) => classes.getOrElseUpdate(td.name.toString, td.symbol)
-      case vd: tpd.ValOrDefDef if !vd.symbol.is(Flags.Synthetic) && !vd.symbol.is(Flags.Param) && !vd.symbol.isConstructor =>
+      case vd: tpd.ValOrDefDef if !vd.symbol.is(Flags.Synthetic) && !vd.symbol.is(Flags.Param) && !vd.symbol.is(Flags.ParamAccessor) && !vd.symbol.isConstructor =>
         terms.getOrElseUpdate(vd.name.toString, vd.symbol)
       case _ =>
     }

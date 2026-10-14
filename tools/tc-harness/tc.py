@@ -12,7 +12,7 @@ the servers disagree with each other.
 A source file may carry its own options in `//> tc <options>` lines (e.g. `//> tc --scala 3.3`)
 and queries in `// ? C a b` lines.
 """
-import argparse, json, os, shlex, sys, urllib.request, urllib.error
+import argparse, json, os, re, shlex, sys, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor
 
 SERVERS = {"tip": 8723, "base": 8724}
@@ -51,6 +51,30 @@ def file_queries(text):
     return [parse_query(l.strip()[5:]) for l in text.splitlines() if l.strip().startswith("// ? ")]
 
 
+INFERRED = re.compile(r"^\s*(?:(?:private|protected|override|final|implicit|lazy)\s+)*(?:val|var|def)\s+([A-Za-z_]\w*)\s*(?:\[[^\]=]*\])?(?:\([^)]*\))*\s*=(?!>)", re.M)
+
+
+def inferred_queries(text, path):
+    """A `type` query for each val/var/def whose type is inferred (no annotation); names should be unique.
+    Each remembers its line (`_at`, client-side only): there, a scalac error makes scalac's answer noise."""
+    seen = {}
+    for m in INFERRED.finditer(text):
+        seen.setdefault(m.group(1), text.count("\n", 0, m.start(1)) + 1)
+    return [{"kind": "type", "a": n, "_at": (path, line)} for n, line in seen.items()]
+
+
+def drop_noise(req, resps):
+    """Inferred-type queries on a line where scalac reports an error compare an error type: drop them."""
+    at = [q.get("_at") for q in req["queries"]]
+    for r in resps:
+        sc = r.get("scalac")
+        if not sc or "queries" not in r:
+            continue
+        bad = {(d["file"], d["line"]) for d in sc["diagnostics"] if d["severity"] == "error"}
+        r["queries"] = [q for q, a in zip(r["queries"], at) if a not in bad]
+    return resps
+
+
 def file_options(text):
     return [w for l in text.splitlines() if l.startswith("//> tc ") for w in shlex.split(l[7:])]
 
@@ -66,6 +90,8 @@ def make_parser():
     ap.add_argument("-O", "--option", action="append", default=[], help="scalac option (repeatable)")
     ap.add_argument("-q", "--query", action="append", default=[], help="'C a b' | 'E a b' | 'B a Cls' | 'T a'")
     ap.add_argument("--no-oracle", action="store_true")
+    ap.add_argument("--infer", action=argparse.BooleanOptionalAction, default=None,
+                    help="query the type of every unannotated val/var/def (default: on with --each)")
     ap.add_argument("--warnings", action="store_true")
     ap.add_argument("--json", action="store_true", help="print raw responses")
     ap.add_argument("--with", dest="with_", action="append", default=[], help="extra file sent along (with --each or //> tc: relative to the probe)")
@@ -82,14 +108,18 @@ def fmt(d):
 
 def request(a, files):
     queries = [parse_query(q) for q in a.query] + [q for f in files for q in file_queries(f["text"])]
+    if a.infer or (a.infer is None and a.each):
+        explicit = {q["a"] for q in queries if q["kind"] == "type"}
+        queries += [q for f in files if f["path"].endswith(".scala") for q in inferred_queries(f["text"], f["path"]) if q["a"] not in explicit]
     return {"scalaVersion": a.scala, "jdk": a.jdk, "classpath": [p for p in a.cp.split(":") if p],
             "scalacOptions": a.option, "files": files, "queries": queries,
             "oracle": not a.no_oracle, "warnings": a.warnings}
 
 
 def run(servers, req):
+    body = dict(req, queries=[{k: v for k, v in q.items() if not k.startswith("_")} for q in req["queries"]])
     with ThreadPoolExecutor(len(servers)) as ex:
-        return list(ex.map(lambda s: post(s[1], "/check", req), servers))
+        return drop_noise(req, list(ex.map(lambda s: post(s[1], "/check", body), servers)))
 
 
 def agrees(r):
@@ -141,8 +171,8 @@ def report(servers, resps):
                 return f"{n}={rq['intellij']}{mark}"
             cells = [cell(n, r["queries"][i]) for n, r in answered]
             sc = q.get("scalac")
-            marks = "".join("" if r["queries"][i].get("agree", True) else "≠" for _, r in answered)
-            print(f"  {marks or ' ':2} {q['kind']} {ops}: " + "  ".join(cells) + (f"  scalac={sc}" if sc is not None else ""))
+            marks = "".join("·" if r["queries"][i].get("agree", True) else "≠" for _, r in answered)
+            print(f"  {marks} {q['kind']} {ops}: " + "  ".join(cells) + (f"  scalac={sc}" if sc is not None else ""))
 
 
 def summary(r):
