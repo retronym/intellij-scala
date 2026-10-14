@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Client for the type-checking harness (TcServerTest). See README.md.
 
-  tc.py [options] FILE... | -e CODE
-  tc.py --health
+  tc.py [options] FILE... | -e CODE      one request with all files
+  tc.py --each [options] FILE|DIR...    one request per file, one summary line each
+  tc.py --health | --shutdown
 
 Sends the files to one or more harness servers and prints IntelliJ's errors against scalac's,
 plus the answers to queries. With several servers (default: tip and base) it also shows where
 the servers disagree with each other.
+
+A source file may carry its own options in `//> tc <options>` lines (e.g. `//> tc --scala 3.3`)
+and queries in `// ? C a b` lines.
 """
-import argparse, json, os, sys, urllib.request, urllib.error
+import argparse, json, os, shlex, sys, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor
 
 SERVERS = {"tip": 8723, "base": 8724}
@@ -23,21 +27,23 @@ def post(port, path, body=None, timeout=600):
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
         return {"error": e.read().decode(errors="replace")}
-    except (urllib.error.URLError, ConnectionError) as e:
+    except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
         return {"error": f"cannot reach port {port}: {e}"}
 
 
 def parse_query(s):
-    parts = s.split()
     kinds = {"C": "conforms", "E": "equiv", "B": "baseType", "T": "type"}
-    if not parts or parts[0] not in kinds:
+    k, _, rest = s.strip().partition(" ")
+    if k not in kinds:
         sys.exit(f"bad query {s!r}: use 'C a b', 'E a b', 'B a Cls' or 'T a'")
-    k = kinds[parts[0]]
-    if k == "type":
-        return {"kind": k, "a": parts[1]}
-    if k == "baseType":
-        return {"kind": k, "a": parts[1], "cls": parts[2]}
-    return {"kind": k, "a": parts[1], "b": parts[2]}
+    # operands are separated by ' ; ' when they contain spaces, else by whitespace
+    ops = [o.strip() for o in rest.split(" ; ")] if " ; " in rest else rest.split()
+    kind = kinds[k]
+    if kind == "type":
+        return {"kind": kind, "a": " ".join(ops)}
+    if len(ops) != 2:
+        sys.exit(f"bad query {s!r}: two operands needed (use ' ; ' between operands with spaces)")
+    return {"kind": kind, "a": ops[0], ("cls" if kind == "baseType" else "b"): ops[1]}
 
 
 def file_queries(text):
@@ -45,11 +51,11 @@ def file_queries(text):
     return [parse_query(l.strip()[5:]) for l in text.splitlines() if l.strip().startswith("// ? ")]
 
 
-def fmt(d):
-    return f"{d['file']}:{d['line']}:{d['col']}: {d['message']}"
+def file_options(text):
+    return [w for l in text.splitlines() if l.startswith("//> tc ") for w in shlex.split(l[7:])]
 
 
-def main():
+def make_parser():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("files", nargs="*")
     ap.add_argument("-e", "--expr", action="append", default=[], help="inline source (repeatable; Snippet<i>.scala)")
@@ -62,31 +68,34 @@ def main():
     ap.add_argument("--no-oracle", action="store_true")
     ap.add_argument("--warnings", action="store_true")
     ap.add_argument("--json", action="store_true", help="print raw responses")
+    ap.add_argument("--each", action="store_true", help="one request per file (directories: their *.scala)")
+    ap.add_argument("-v", "--verbose", action="store_true", help="with --each: full report for files that disagree")
     ap.add_argument("--health", action="store_true")
     ap.add_argument("--shutdown", action="store_true")
-    a = ap.parse_args()
+    return ap
 
-    servers = [(s, SERVERS.get(s) or int(s)) for s in a.server.split(",")]
-    if a.health or a.shutdown:
-        for name, port in servers:
-            print(name, json.dumps(post(port, "/shutdown" if a.shutdown else "/health", {} if a.shutdown else None, timeout=5)))
-        return
 
-    files = [{"path": os.path.basename(f), "text": open(f).read()} for f in a.files]
-    files += [{"path": f"Snippet{i}.scala", "text": t} for i, t in enumerate(a.expr)]
-    if not files:
-        ap.error("no files")
+def fmt(d):
+    return f"{d['file']}:{d['line']}:{d['col']}: {d['message']}"
+
+
+def request(a, files):
     queries = [parse_query(q) for q in a.query] + [q for f in files for q in file_queries(f["text"])]
-    req = {"scalaVersion": a.scala, "jdk": a.jdk, "classpath": [p for p in a.cp.split(":") if p],
-           "scalacOptions": a.option, "files": files, "queries": queries,
-           "oracle": not a.no_oracle, "warnings": a.warnings}
+    return {"scalaVersion": a.scala, "jdk": a.jdk, "classpath": [p for p in a.cp.split(":") if p],
+            "scalacOptions": a.option, "files": files, "queries": queries,
+            "oracle": not a.no_oracle, "warnings": a.warnings}
 
+
+def run(servers, req):
     with ThreadPoolExecutor(len(servers)) as ex:
-        resps = list(ex.map(lambda s: post(s[1], "/check", req), servers))
-    if a.json:
-        print(json.dumps(dict(zip([n for n, _ in servers], resps)), indent=2))
-        return
+        return list(ex.map(lambda s: post(s[1], "/check", req), servers))
 
+
+def agrees(r):
+    return "error" not in r and r.get("diff", {"agree": True})["agree"]
+
+
+def report(servers, resps):
     scalac_printed = False
     for (name, _), r in zip(servers, resps):
         if "error" in r:
@@ -120,17 +129,73 @@ def main():
         for m in ij["loggedErrors"]:
             print(f"  LOGGED {m[:300]}")
 
-    answered = [r for r in resps if "queries" in r]
+    answered = [(n, r) for (n, _), r in zip(servers, resps) if "queries" in r]
     if answered:
         print("== queries")
-        names = [n for (n, _), r in zip(servers, resps) if "queries" in r]
-        for i, q in enumerate(answered[0]["queries"]):
-            ops = " ".join(q[k] for k in ("a", "b", "cls") if k in q)
-            cells = [f"{n}={r['queries'][i]['intellij']}" for n, r in zip(names, answered)]
+        for i, q in enumerate(answered[0][1]["queries"]):
+            ops = " ; ".join(q[k] for k in ("a", "b", "cls") if k in q)
+            cells = [f"{n}={r['queries'][i]['intellij']}" for n, r in answered]
             sc = q.get("scalac")
-            marks = "".join("" if r["queries"][i].get("agree", True) else "≠" for r in answered)
+            marks = "".join("" if r["queries"][i].get("agree", True) else "≠" for _, r in answered)
             print(f"  {marks or ' ':2} {q['kind']} {ops}: " + "  ".join(cells) + (f"  scalac={sc}" if sc is not None else ""))
-    sys.exit(0 if all("error" not in r and r.get("diff", {"agree": True})["agree"] for r in resps) else 1)
+
+
+def summary(r):
+    """`ok`, or what disagrees: `+i/-s` errors only in IntelliJ / only in scalac, `q≠n`, `LOG`, `ERR`."""
+    if "error" in r:
+        return "ERR"
+    parts = []
+    d = r.get("diff")
+    if d and not d["agree"]:
+        parts.append(f"+{len(d['intellijOnly'])}/-{len(d['scalacOnly'])}")
+    if (r.get("scalac") or {}).get("crash"):
+        parts.append("SCALAC-CRASH")
+    qd = sum(1 for q in r.get("queries", []) if q.get("agree") is False)
+    if qd:
+        parts.append(f"q≠{qd}")
+    if r["intellij"]["loggedErrors"]:
+        parts.append("LOG")
+    return ",".join(parts) or "ok"
+
+
+def main():
+    ap = make_parser()
+    a = ap.parse_args()
+    servers = [(s, SERVERS.get(s) or int(s)) for s in a.server.split(",")]
+    if a.health or a.shutdown:
+        for name, port in servers:
+            print(name, json.dumps(post(port, "/shutdown" if a.shutdown else "/health", {} if a.shutdown else None, timeout=5)))
+        return
+
+    if a.each:
+        paths = []
+        for p in a.files:
+            paths += sorted(os.path.join(p, f) for f in os.listdir(p) if f.endswith(".scala")) if os.path.isdir(p) else [p]
+        bad = 0
+        for p in paths:
+            text = open(p).read()
+            fa = ap.parse_args(sys.argv[1:] + file_options(text))
+            resps = run(servers, request(fa, [{"path": os.path.basename(p), "text": text}]))
+            line = "  ".join(f"{n}={summary(r)}" for (n, _), r in zip(servers, resps))
+            ok = all(summary(r) == "ok" for r in resps)
+            bad += not ok
+            print(f"{'  ' if ok else '✗ '}{p}: {line}", flush=True)
+            if a.verbose and not ok:
+                report(servers, resps)
+        print(f"{bad}/{len(paths)} disagree")
+        sys.exit(1 if bad else 0)
+
+    files = [{"path": os.path.basename(f), "text": open(f).read()} for f in a.files]
+    files += [{"path": f"Snippet{i}.scala", "text": t} for i, t in enumerate(a.expr)]
+    if not files:
+        ap.error("no files")
+    a = ap.parse_args(sys.argv[1:] + [o for f in files for o in file_options(f["text"])])
+    resps = run(servers, request(a, files))
+    if a.json:
+        print(json.dumps(dict(zip([n for n, _ in servers], resps)), indent=2))
+        return
+    report(servers, resps)
+    sys.exit(0 if all(agrees(r) for r in resps) else 1)
 
 
 if __name__ == "__main__":
