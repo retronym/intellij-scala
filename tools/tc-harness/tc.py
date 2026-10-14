@@ -93,6 +93,7 @@ def make_parser():
     ap.add_argument("--infer", action=argparse.BooleanOptionalAction, default=None,
                     help="query the type of every unannotated val/var/def (default: on with --each)")
     ap.add_argument("--warnings", action="store_true")
+    ap.add_argument("--fresh", action="store_true", help="set the project up again first (rules out state from earlier requests)")
     ap.add_argument("--json", action="store_true", help="print raw responses")
     ap.add_argument("--with", dest="with_", action="append", default=[], help="extra file sent along (with --each or //> tc: relative to the probe)")
     ap.add_argument("--each", action="store_true", help="one request per file (directories: their *.scala)")
@@ -113,7 +114,7 @@ def request(a, files):
         queries += [q for f in files if f["path"].endswith(".scala") for q in inferred_queries(f["text"], f["path"]) if q["a"] not in explicit]
     return {"scalaVersion": a.scala, "jdk": a.jdk, "classpath": [p for p in a.cp.split(":") if p],
             "scalacOptions": a.option, "files": files, "queries": queries,
-            "oracle": not a.no_oracle, "warnings": a.warnings}
+            "oracle": not a.no_oracle, "warnings": a.warnings, "fresh": a.fresh}
 
 
 def run(servers, req):

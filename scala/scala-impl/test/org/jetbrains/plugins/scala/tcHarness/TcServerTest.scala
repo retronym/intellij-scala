@@ -31,6 +31,7 @@ class TcServerTest extends TestCase {
   // the compilers are single-threaded (Scala 3 asserts that a ContextBase stays on one thread)
   private val oracleThread = Executors.newSingleThreadExecutor()
   private var worker: TcWorker = null
+  private var generation = 0
 
   private val label = sys.env.getOrElse("TC_LABEL", "")
   /** The commit under test: the newest one that is not part of the harness. */
@@ -96,14 +97,15 @@ class TcServerTest extends TestCase {
     }, oracleThread))
 
     var setupMs = 0L
-    if (worker == null || worker.env != req.env) {
+    if (worker == null || worker.env != req.env || req.fresh) {
       val t0 = System.nanoTime()
       if (worker != null) {
         val old = worker
         worker = null
         Try(EdtTestUtil.runInEdtAndWait((() => old.stop()): ThrowableRunnable[Throwable])).failed.foreach(e => println(s"TC-HARNESS tearDown: $e"))
       }
-      val w = new TcWorker(req.env)
+      if (req.fresh) generation += 1
+      val w = new TcWorker(req.env, generation)
       EdtTestUtil.runInEdtAndWait((() => w.start()): ThrowableRunnable[Throwable])
       worker = w
       setupMs = (System.nanoTime() - t0) / 1000000

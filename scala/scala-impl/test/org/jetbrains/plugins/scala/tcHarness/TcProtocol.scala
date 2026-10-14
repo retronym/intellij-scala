@@ -57,7 +57,8 @@ object TcProtocol {
     }
   }
 
-  final case class Request(env: Env, files: Seq[SourceFile], queries: Seq[Query], oracle: Boolean, warnings: Boolean)
+  /** `fresh`: set the project up again for this request, to rule out state left by earlier ones. */
+  final case class Request(env: Env, files: Seq[SourceFile], queries: Seq[Query], oracle: Boolean, warnings: Boolean, fresh: Boolean = false)
 
   /** `severity` is `error` or `warning`; `line`/`col` are 1-based. */
   final case class Diagnostic(file: String, line: Int, col: Int, severity: String, message: String) {
@@ -87,7 +88,7 @@ object TcProtocol {
     require(files.nonEmpty, "no files")
     require(files.map(_.path).distinct.size == files.size, "duplicate file paths")
     val queries = Option(o.get("queries")).toSeq.flatMap(_.getAsJsonArray.asScala).map(q => Query.fromJson(q.getAsJsonObject))
-    Request(env, files, queries, oracle = bool("oracle", true), warnings = bool("warnings", false))
+    Request(env, files, queries, oracle = bool("oracle", true), warnings = bool("warnings", false), fresh = bool("fresh", false))
   }
 
   // tiny JSON builders
